@@ -1,0 +1,108 @@
+---
+description: BigCommerce (Catalyst) standards — GraphQL Storefront API, REST Management, channel scoping, caching, secrets, RSC patterns, server actions, webhooks. Apply to any BC-touching file.
+globs: ["core/**/*", "src/**/*", "app/**/*", "**/*.ts", "**/*.tsx"]
+alwaysApply: true
+---
+
+# BigCommerce (Catalyst) Standards
+
+## GraphQL Storefront API
+
+- All GraphQL operations use `gql.tada` `graphql()` from `core/client/graphql.ts`. Do not call raw `fetch` against the GraphQL endpoint.
+- Reuse fragments from `core/client/fragments/` (`PricingFragment`, etc.).
+- Honour fragment masking: consume `FragmentOf<T>` via `readFragment(Fragment, masked)`.
+- Pass `currencyCode` and pagination cursors (`first`/`after`) explicitly.
+- Selection sets must be lean — every requested field consumed by the UI.
+
+## REST Management API (server-only)
+
+- Base URL: `https://api.bigcommerce.com/stores/${BIGCOMMERCE_STORE_HASH}/v3/...` (some endpoints use `/v2/`).
+- Auth: `X-Auth-Token: ${BIGCOMMERCE_ACCESS_TOKEN}`. Never expose in client bundles or `NEXT_PUBLIC_*`.
+- Lives only in route handlers or server actions. `runtime = 'nodejs'`.
+- `cache: 'no-store'` for any PII (customers, orders).
+- Honour rate limits — read `X-Rate-Limit-Requests-Left`, back off on 429.
+
+## Channel scoping
+
+- Every Storefront API request is channel-scoped via `BIGCOMMERCE_CHANNEL_ID`.
+- For multi-storefront, resolve channel per request via `beforeRequest` and scope cart cookies per channel.
+- Never share a `cartId` cookie across channels.
+
+## Secrets
+
+Browser-safe values (only with `NEXT_PUBLIC_` prefix and after careful review):
+- (none in default Catalyst setup — keep everything server-side)
+
+Server-only values (NEVER exposed):
+- `BIGCOMMERCE_ACCESS_TOKEN` (REST Management)
+- `BIGCOMMERCE_STOREFRONT_TOKEN` (Storefront JWT; treat as server-only by default)
+- Customer impersonation token (minted server-side, attached to `client.fetch`)
+- `AUTH_SECRET` (Auth.js)
+- `B2B_API_TOKEN`
+- `MAKESWIFT_SITE_API_KEY`
+- `BIGCOMMERCE_WEBHOOK_SECRET`
+- `BIGCOMMERCE_CLIENT_SECRET`
+
+## Caching
+
+| Query type | Strategy |
+| --- | --- |
+| Anonymous catalog read | `next: { revalidate: <target>, tags: [TAGS.xxx] }` |
+| Customer-scoped read (cart, customer, orders) | `cache: 'no-store'` |
+| Mutation | `cache: 'no-store'` then `revalidateTag(TAGS.xxx)` |
+
+- Tag every cached query. Untagged caches cannot be invalidated by webhooks.
+- Never `force-cache` on customer-scoped queries — privacy hazard.
+- Customer impersonation token must always be paired with `cache: 'no-store'`.
+
+## RSC vs client
+
+- Default to React Server Components. `'use client'` only when interactivity demands it.
+- Never call GraphQL Storefront or REST Management from a client component — all data lives in RSC or server actions.
+- Pass only serialisable props from RSC to client.
+
+## Server actions
+
+- File pattern: `app/.../_actions/<verb>.ts` with `'use server'` at the top.
+- Validate `FormData` with Zod (Conform's `parseWithZod`).
+- After mutations, `revalidateTag(TAGS.cart)` (or relevant tag).
+- Mask BC error messages before returning to the client.
+
+## Webhooks
+
+- Path: `app/api/webhooks/.../route.ts`.
+- `export const runtime = 'nodejs'`. `export const dynamic = 'force-dynamic'`.
+- Verify signature with `crypto.timingSafeEqual` against `BIGCOMMERCE_WEBHOOK_SECRET`.
+- Idempotency on `payload.hash` (Redis/DB, 24h TTL).
+- Respond 2xx within 5s. Push heavy work to a queue.
+- Invalidate the cache tags that match the event scope.
+
+## Makeswift
+
+- Register components with `runtime.registerComponent` in a side-effect file under `core/lib/makeswift/components/`.
+- Side-effect imports added to a central register (often `core/lib/makeswift/register-components.ts`).
+- `MAKESWIFT_SITE_API_KEY` is server-only.
+- Use `siteVersion: 'Working'` in draft mode (`draftMode().isEnabled === true`), otherwise `'Live'`.
+- Makeswift catch-all route should resolve last — let real Catalyst routes (PDP, PLP) match first.
+
+## Customer auth
+
+- Default: Auth.js v5 (beta) + BC Customer Login API. Session token stored in HttpOnly, Secure, SameSite=Lax cookie.
+- Customer impersonation token retrieved via `getSessionCustomerAccessToken()` in server code.
+- JWT SSO redirect: sign with `BIGCOMMERCE_CLIENT_SECRET`, `expiresIn: '30s'`, include `store_hash`, `channel_id`. Verify identity before signing.
+- reCAPTCHA on registration and password reset.
+
+## B2B Edition
+
+- Check `B2B_EDITION_ENABLED` server-side before importing B2B client or rendering B2B-only UI.
+- Mint B2B session token per-customer via `/api/io/auth/storefront`; cache by customer ID with short TTL.
+- Sales rep impersonation: persistent "Shopping as ..." banner; audit every action with rep ID + buyer ID.
+- Enforce spend limits and role gating server-side.
+
+## Testing
+
+- Vitest + React Testing Library + MSW for unit/integration.
+- MSW intercepts GraphQL by operation name (`graphql.query('Name', ...)`).
+- Mock Next.js helpers with `vi.mock('next/headers', ...)` and `vi.mock('next/cache', ...)`.
+- RSC cannot render in jsdom — extract data-shaping logic into pure functions or rely on Playwright for full rendering.
+- Playwright runs against a dedicated test channel; never against production.

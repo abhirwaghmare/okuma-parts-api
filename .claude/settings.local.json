@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:marketplace.visualstudio.com)",
+      "WebSearch",
+      "Bash(code --install-extension IgorSbitnev.error-gutters --force)",
+      "Bash(code --list-extensions)",
+      "Bash(ls \"c:\\\\Users\\\\llal\\\\Downloads\\\\Implementation\\\\Implementation\\\\01 Technical\\\\PBSample1-LE15-173-R2\" 2>&1)",
+      "Read(//c/Users/llal/Downloads/Implementation/Implementation/01 Technical/PBSample1-LE15-173-R2/**)",
+      "Bash(ls \"c:/Users/llal/Downloads/\" | grep -i cornerstone 2>&1)",
+      "Read(//c/Users/llal/Downloads/**)"
+    ]
+  }
+}

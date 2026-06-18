@@ -1,0 +1,21 @@
+{
+    "mcpServers": {
+        "figma-desktop": {
+            "type": "http",
+            "url": "http://127.0.0.1:3845/mcp"
+        },
+        "azure-devops": {
+            "command": "npx",
+            "args": ["-y", "@tiberriver256/mcp-server-azure-devops"],
+            "env": {
+                "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/YOUR_ORG",
+                "AZURE_DEVOPS_AUTH_METHOD": "pat",
+                "AZURE_DEVOPS_TOKEN": "YOUR_PAT_TOKEN"
+            }
+        },
+        "chrome-devtools": {
+            "command": "npx",
+            "args": ["-y", "chrome-devtools-mcp@latest"]
+        }
+    }
+}
