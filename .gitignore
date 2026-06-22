@@ -1,6 +1,7 @@
 # BigCommerce Stencil
 .stencil
 config.stencil.json
+secrets.stencil.json
 
 # Dependencies
 node_modules/

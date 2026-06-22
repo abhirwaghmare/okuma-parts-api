@@ -1,28 +1,42 @@
 <project_context>
-[Run /initialize-setup to populate. Capture: project name, business unit, BigCommerce store hash, channel ID(s), B2B Edition enabled (y/n), Makeswift enabled (y/n), production storefront origin, target environments (preview / staging / prod), customer-auth model (Auth.js v5 + Customer Login API / third-party IdP via JWT SSO), key integrations (ERP, OMS, search, analytics), launch date, key constraints (regulatory, multi-region, accessibility).]
+- Project name: Okuma BC
+- Business unit: Deloitte US Consulting
+- BigCommerce store hash: tb0nfpch8c
+- Channel ID(s): [FILL IN — check store admin → Channel Manager]
+- B2B Edition enabled: n (not configured — confirm if required)
+- Makeswift enabled: n (Stencil theme, not Catalyst)
+- Production storefront origin: [FILL IN — e.g. https://okuma.mybigcommerce.com or custom domain]
+- Target environments: [FILL IN — preview / staging / prod]
+- Customer auth model: BigCommerce native session (Stencil) + API key auth for Node.js backend
+- Key integrations: BigCommerce V2/V3 REST API, Storefront GraphQL API, webhooks (store/order/statusUpdated)
+- Launch date: [FILL IN]
+- Key constraints: [FILL IN — regulatory, multi-region, accessibility requirements if any]
 </project_context>
 
 <codebase_stack>
-[Run /initialize-setup to populate. Capture:
-- Storefront: Catalyst version (canary or release), Next.js version, React version, Node version (24+).
-- Package manager: pnpm + Turborepo.
-- Type system: TypeScript version; gql.tada for GraphQL operations.
-- Styling: Tailwind CSS version; cn()/clsx/tailwind-merge helper convention.
-- Visual editor: Makeswift (y/n) with site API key per environment.
-- Auth: Auth.js v5 beta (NextAuth) + BC Customer Login API.
-- i18n: next-intl (y/n), supported locales.
-- Channels: count and IDs; multi-storefront resolver file if present.
-- B2B Edition: enabled (y/n), B2B API token rotation cadence.
-- Storefront API tokens: storefront token rotation cadence, unauthenticated token usage, customer impersonation token mint path.
-- REST Management API scopes used (Products, Orders, Customers, Webhooks, Customers Login, etc.).
-- Testing: Vitest + React Testing Library + MSW for unit/integration; Playwright for E2E; coverage target 80%.
-- Build command: `pnpm build` (or project-specific).
-- Dev command: `pnpm dev` (Next.js dev server).
-- Test commands: `pnpm test` (Vitest), `pnpm playwright test` (E2E).
-- Lint/typecheck: `pnpm lint`, `pnpm typecheck`.
-- Codegen: `pnpm generate` (reads .env.local, introspects BC schema).
-- Deploy: Vercel (recommended), Netlify, Cloudflare Pages, or self-hosted Node; preview channel mapping per environment.
-- Observability: OpenTelemetry settings (OTEL_SERVICE_NAME, NEXT_OTEL_VERBOSE), Vercel Web Analytics / Datadog RUM if configured.]
+- Storefront: BigCommerce Stencil (Cornerstone-based Apex fork) — not Catalyst/Next.js
+- Templating: Handlebars (.html templates in theme/templates/)
+- Styling: SCSS (theme/assets/scss/) bundled via webpack
+- JS: Custom JS in theme/assets/js/, webpack-bundled, PageManager pattern
+- Build tool: webpack (webpack.common.js / webpack.dev.js / webpack.prod.js) + Grunt
+- Stencil CLI: @bigcommerce/stencil-cli (global)
+- Package manager: npm (theme/package.json and app/package.json — no monorepo tooling yet)
+- Node version: >= 18.x
+- Backend: Node.js/Express (app/src/index.js)
+  - Framework: Express 4.x
+  - HTTP client: axios
+  - Auth: express-session + BC OAuth 2.0 callback flow
+  - Config: dotenv (app/.env — never committed)
+- REST Management API scopes used: Products (v3/catalog/products), Orders, Webhooks (v3/hooks)
+- BC credentials location: app/.env (BC_CLIENT_ID, BC_CLIENT_SECRET, BC_ACCESS_TOKEN, BC_STORE_HASH)
+- Build command (theme): stencil bundle → uploads .zip via store admin
+- Dev command (theme): stencil start (localhost:3000 proxy)
+- Dev command (app): npm run dev (nodemon, port 3000 — change PORT in app/.env if running both)
+- Deploy (theme): stencil bundle → upload zip to store admin or via API
+- Deploy (app): [FILL IN — Heroku / Railway / EC2 / other]
+- Tunnelling for webhooks/callbacks: ngrok (ngrok http 3000)
+- Testing: [FILL IN — no test framework configured yet]
+- Observability: [FILL IN]
 </codebase_stack>
 
 <system_instructions>
