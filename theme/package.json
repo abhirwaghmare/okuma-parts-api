@@ -39,6 +39,8 @@
     "cli": "^1.0.1",
     "eslint": "^4.8.0",
     "eslint-config-airbnb": "^16.0.0",
+    "eslint-config-prettier": "^6.15.0",
+    "prettier": "^3.0.0",
     "eslint-plugin-import": "^2.22.1",
     "eslint-plugin-jsx-a11y": "^6.4.1",
     "eslint-plugin-react": "^7.22.0",
@@ -70,6 +72,10 @@
     "lighthouse": "npx lighthouse --config-path=lighthouse-config.js --quiet --output html --chrome-flags=\"--headless\" $URL",
     "test": "npx jest",
     "stylelint": "npx stylelint **/*.scss",
-    "stylelint:fix": "npx stylelint --fix **/*.scss"
+    "stylelint:fix": "npx stylelint --fix **/*.scss",
+    "lint": "npx eslint assets/js/theme/**/*.js",
+    "lint:fix": "npx eslint --fix assets/js/theme/**/*.js",
+    "format": "npx prettier --write \"assets/js/**/*.js\" \"assets/scss/**/*.scss\"",
+    "format:check": "npx prettier --check \"assets/js/**/*.js\" \"assets/scss/**/*.scss\""
   }
 }
