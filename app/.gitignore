@@ -1,6 +1,0 @@
-node_modules/
-.env
-*.zip
-dist/
-.DS_Store
-*.js.map
