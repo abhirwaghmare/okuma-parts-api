@@ -531,7 +531,7 @@ blog:
 </style>
 {{/partial}} {{#partial "page"}} {{#each shipping_messages}} {{> components/common/alert/alert-info message}} {{/each}}
 
-<main class="main-area">
+<div class="main-area">
     <!-- Welcome banner -->
     <div class="welcome">
         <h1 class="welcome__title">
@@ -567,69 +567,73 @@ blog:
         <div class="machine-grid" id="machine-grid">
             <!-- Machine cards injected here by app JS -->
 
-             <!-- Card 1 -->
-          <div class="machine-card">
-            <img class="machine-card__photo" src="dash-machine-lu300m.png" alt="LU300-M">
-            <div class="machine-card__body">
-              <div>
-                <div class="machine-card__name">LU300-M</div>
-                <div class="machine-card__serial">Serial: M5-2891-K</div>
-              </div>
-              <div class="machine-card__divider"></div>
-              <div class="machine-card__foot">
-                <div>
-                  <div class="machine-card__reg-label">Registered</div>
-                  <div class="machine-card__reg-date">12 Oct 2024</div>
+            <!-- Card 1 -->
+            <div class="machine-card">
+                <img class="machine-card__photo" src="dash-machine-lu300m.png" alt="LU300-M" />
+                <div class="machine-card__body">
+                    <div>
+                        <div class="machine-card__name">LU300-M</div>
+                        <div class="machine-card__serial">Serial: M5-2891-K</div>
+                    </div>
+                    <div class="machine-card__divider"></div>
+                    <div class="machine-card__foot">
+                        <div>
+                            <div class="machine-card__reg-label">Registered</div>
+                            <div class="machine-card__reg-date">12 Oct 2024</div>
+                        </div>
+                        <button class="btn-browse" onclick="openModal('LU300-M', 'M5-2891-K')">
+                            Browse Parts Book
+                        </button>
+                    </div>
                 </div>
-                <button class="btn-browse" onclick="openModal('LU300-M','M5-2891-K')">Browse Parts Book</button>
-              </div>
             </div>
-          </div>
 
-          <!-- Card 2 -->
-          <div class="machine-card">
-            <img class="machine-card__photo" src="dash-machine-multus.png" alt="MULTUS U3000">
-            <div class="machine-card__body">
-              <div>
-                <div class="machine-card__name">MULTUS U3000</div>
-                <div class="machine-card__serial">Serial: MU-9102-L</div>
-              </div>
-              <div class="machine-card__divider"></div>
-              <div class="machine-card__foot">
-                <div>
-                  <div class="machine-card__reg-label">Registered</div>
-                  <div class="machine-card__reg-date">05 Jan 2025</div>
+            <!-- Card 2 -->
+            <div class="machine-card">
+                <img class="machine-card__photo" src="dash-machine-multus.png" alt="MULTUS U3000" />
+                <div class="machine-card__body">
+                    <div>
+                        <div class="machine-card__name">MULTUS U3000</div>
+                        <div class="machine-card__serial">Serial: MU-9102-L</div>
+                    </div>
+                    <div class="machine-card__divider"></div>
+                    <div class="machine-card__foot">
+                        <div>
+                            <div class="machine-card__reg-label">Registered</div>
+                            <div class="machine-card__reg-date">05 Jan 2025</div>
+                        </div>
+                        <button class="btn-browse" onclick="openModal('MULTUS U3000', 'MU-9102-L')">
+                            Browse Parts Book
+                        </button>
+                    </div>
                 </div>
-                <button class="btn-browse" onclick="openModal('MULTUS U3000','MU-9102-L')">Browse Parts Book</button>
-              </div>
             </div>
-          </div>
 
-          <!-- Card 3 -->
-          <div class="machine-card">
-            <img class="machine-card__photo" src="dash-machine-lb2000.png" alt="LB2000 EX III">
-            <div class="machine-card__body">
-              <div>
-                <div class="machine-card__name">LB2000 EX III</div>
-                <div class="machine-card__serial">Serial: LB-4431-M</div>
-              </div>
-              <div class="machine-card__divider"></div>
-              <div class="machine-card__foot">
-                <div>
-                  <div class="machine-card__reg-label">Registered</div>
-                  <div class="machine-card__reg-date">18 Feb 2025</div>
+            <!-- Card 3 -->
+            <div class="machine-card">
+                <img class="machine-card__photo" src="dash-machine-lb2000.png" alt="LB2000 EX III" />
+                <div class="machine-card__body">
+                    <div>
+                        <div class="machine-card__name">LB2000 EX III</div>
+                        <div class="machine-card__serial">Serial: LB-4431-M</div>
+                    </div>
+                    <div class="machine-card__divider"></div>
+                    <div class="machine-card__foot">
+                        <div>
+                            <div class="machine-card__reg-label">Registered</div>
+                            <div class="machine-card__reg-date">18 Feb 2025</div>
+                        </div>
+                        <button class="btn-browse" onclick="openModal('LB2000 EX III', 'LB-4431-M')">
+                            Browse Parts Book
+                        </button>
+                    </div>
                 </div>
-                <button class="btn-browse" onclick="openModal('LB2000 EX III','LB-4431-M')">Browse Parts Book</button>
-              </div>
             </div>
-          </div>
-        </div>
         </div>
     </section>
 
-
     <!-- Quick Links -->
-    <div class="quick-links main-area">
+    <div class="quick-links">
         <a href="/search.php" class="link-card">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path
@@ -705,7 +709,7 @@ blog:
     </div>
 
     <!-- Recent Orders — rows populated via app JS -->
-    <section class="main-area section">
+    <section class="section">
         <div class="section__head">
             <h2 class="section__title">Recent Orders</h2>
             <a href="/account.php?action=order_status" class="section__link">View All Orders →</a>
@@ -723,45 +727,59 @@ blog:
                             <th class="col-view"></th>
                         </tr>
                     </thead>
-                     <tbody>
-              <tr>
-                <td class="col-order">OKU-2026-00418</td>
-                <td class="col-date">Feb 22, 2026</td>
-                <td class="col-items">Spindle Bearing (2), Coolant Pump</td>
-                <td class="col-total">$842.25</td>
-                <td class="col-status"><span class="status-badge status-badge--processing"><span class="dot"></span>Processing</span></td>
-                <td class="col-view"><a href="#" class="order-view-link">View</a></td>
-              </tr>
-              <tr>
-                <td class="col-order">OKU-2026-00392</td>
-                <td class="col-date">Feb 18, 2026</td>
-                <td class="col-items">Drive Belt (5), Tool Changer Cam</td>
-                <td class="col-total">$1,204.00</td>
-                <td class="col-status"><span class="status-badge status-badge--shipped"><span class="dot"></span>Shipped</span></td>
-                <td class="col-view"><a href="#" class="order-view-link">View</a></td>
-              </tr>
-              <tr>
-                <td class="col-order">OKU-2026-00355</td>
-                <td class="col-date">Feb 10, 2026</td>
-                <td class="col-items">Hydraulic Filter Kit</td>
-                <td class="col-total">$412.00</td>
-                <td class="col-status"><span class="status-badge status-badge--delivered"><span class="dot"></span>Delivered</span></td>
-                <td class="col-view"><a href="#" class="order-view-link">View</a></td>
-              </tr>
-              <tr>
-                <td class="col-order">OKU-2026-00310</td>
-                <td class="col-date">Feb 02, 2026</td>
-                <td class="col-items">Proximity Sensor, Limit Switch</td>
-                <td class="col-total">$124.50</td>
-                <td class="col-status"><span class="status-badge status-badge--delivered"><span class="dot"></span>Delivered</span></td>
-                <td class="col-view"><a href="#" class="order-view-link">View</a></td>
-              </tr>
-            </tbody>
+                    <tbody>
+                        <tr>
+                            <td class="col-order">OKU-2026-00418</td>
+                            <td class="col-date">Feb 22, 2026</td>
+                            <td class="col-items">Spindle Bearing (2), Coolant Pump</td>
+                            <td class="col-total">$842.25</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--processing"
+                                    ><span class="dot"></span>Processing</span
+                                >
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                        <tr>
+                            <td class="col-order">OKU-2026-00392</td>
+                            <td class="col-date">Feb 18, 2026</td>
+                            <td class="col-items">Drive Belt (5), Tool Changer Cam</td>
+                            <td class="col-total">$1,204.00</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--shipped"><span class="dot"></span>Shipped</span>
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                        <tr>
+                            <td class="col-order">OKU-2026-00355</td>
+                            <td class="col-date">Feb 10, 2026</td>
+                            <td class="col-items">Hydraulic Filter Kit</td>
+                            <td class="col-total">$412.00</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--delivered"
+                                    ><span class="dot"></span>Delivered</span
+                                >
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                        <tr>
+                            <td class="col-order">OKU-2026-00310</td>
+                            <td class="col-date">Feb 02, 2026</td>
+                            <td class="col-items">Proximity Sensor, Limit Switch</td>
+                            <td class="col-total">$124.50</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--delivered"
+                                    ><span class="dot"></span>Delivered</span
+                                >
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                    </tbody>
                 </table>
             </div>
         </div>
     </section>
-</main>
+</div>
 
 <!-- Browse Parts Book Modal -->
 <div class="modal-overlay" id="partsModalOverlay" onclick="handleOverlayClick(event)">

@@ -1,5 +1,8 @@
-<main class="body" id="main-content" role="main" data-currency-code="{{currency_selector.active_currency_code}}">
-    {{#block "hero"}} {{/block}}
-    <div>{{#block "page"}} {{/block}}</div>
-    {{> components/common/modal/modal}} {{> components/common/alert/alert-modal}}
-</main>
+<div class="app-body-shell">
+    {{> components/common/sidebar}}
+    <main class="body" id="main-content" role="main" data-currency-code="{{currency_selector.active_currency_code}}">
+        {{#block "hero"}} {{/block}}
+        <div>{{#block "page"}} {{/block}}</div>
+        {{> components/common/modal/modal}} {{> components/common/alert/alert-modal}}
+    </main>
+</div>
