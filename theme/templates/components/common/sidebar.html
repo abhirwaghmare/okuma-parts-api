@@ -1,0 +1,100 @@
+<aside class="sidebar" id="okuma-sidebar" role="navigation" aria-label="Site navigation">
+    <a href="/" class="sidebar-item {{#if page_type '===' 'default'}}active{{/if}}" data-sidebar-key="home">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="2" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
+            <rect x="11" y="2" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
+            <rect x="2" y="11" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
+            <rect x="11" y="11" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2" />
+        </svg>
+        <span>Dashboard</span>
+    </a>
+
+    <a href="/search.php" class="sidebar-item" data-sidebar-key="parts">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path
+                d="M4 2h11a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z"
+                stroke="currentColor"
+                stroke-width="2"
+            />
+            <path d="M7 2v16M10 6h3M10 9h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <span>Browse Parts Book</span>
+    </a>
+
+    <a href="/account.php?action=order_status" class="sidebar-item" data-sidebar-key="orders">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="2" />
+            <path d="M10 5.5V10l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <span>My Orders</span>
+    </a>
+
+    <a href="/" class="sidebar-item" data-sidebar-key="myquotes">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="2" />
+            <path d="M10 5.5V10l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <span>My Quotes</span>
+    </a>
+
+    <a href="/account.php" class="sidebar-item" data-sidebar-key="account">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="10" cy="6.5" r="3.5" stroke="currentColor" stroke-width="2" />
+            <path
+                d="M3 18c0-3.6 3.13-6.5 7-6.5s7 2.9 7 6.5"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+            />
+        </svg>
+        <span>My Account</span>
+    </a>
+
+    <a href="/account.php?action=request_quote" class="sidebar-item" data-sidebar-key="quote">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="2" width="14" height="16" rx="1" stroke="currentColor" stroke-width="2" />
+            <path d="M7 6h6M7 9h6M7 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <span>Request a Quote</span>
+    </a>
+</aside>
+
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<script>
+    (function () {
+        var path = window.location.pathname;
+        var map = {
+            home: ['/', '/index.php'],
+            parts: ['/search.php'],
+            cart: ['/cart.php'],
+            orders: ['/account.php'],
+            account: ['/account.php'],
+        };
+        var items = document.querySelectorAll('#okuma-sidebar .sidebar-item');
+        items.forEach(function (item) {
+            var key = item.getAttribute('data-sidebar-key');
+            var href = item.getAttribute('href');
+            if (href && path.indexOf(href.split('?')[0]) === 0 && href !== '/') {
+                item.classList.add('active');
+            }
+        });
+
+        var overlay = document.getElementById('sidebarOverlay');
+        var sidebar = document.getElementById('okuma-sidebar');
+        var hamburger = document.querySelector('.nav__hamburger');
+
+        if (hamburger) {
+            hamburger.addEventListener('click', function () {
+                sidebar.classList.toggle('sidebar--open');
+                overlay.classList.toggle('show');
+            });
+        }
+        if (overlay) {
+            overlay.addEventListener('click', function () {
+                sidebar.classList.remove('sidebar--open');
+                overlay.classList.remove('show');
+            });
+        }
+    })();
+</script>
