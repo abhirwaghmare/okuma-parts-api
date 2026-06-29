@@ -3,40 +3,44 @@
 - Business unit: Deloitte US Consulting
 - BigCommerce store hash: tb0nfpch8c
 - Channel ID(s): [FILL IN — check store admin → Channel Manager]
-- B2B Edition enabled: n (not configured — confirm if required)
+- B2B Edition enabled: n (using BundleB2B/B3 auto-loader instead — configured in theme/assets/js/theme/global.js)
 - Makeswift enabled: n (Stencil theme, not Catalyst)
 - Production storefront origin: [FILL IN — e.g. https://okuma.mybigcommerce.com or custom domain]
 - Target environments: [FILL IN — preview / staging / prod]
-- Customer auth model: BigCommerce native session (Stencil) + API key auth for Node.js backend
-- Key integrations: BigCommerce V2/V3 REST API, Storefront GraphQL API, webhooks (store/order/statusUpdated)
+- Customer auth model: BigCommerce native session (Stencil built-in login/account pages)
+- Key integrations: BC V2/V3 REST API, Storefront GraphQL API, webhooks (store/order/statusUpdated), BundleB2B (B3) auto-loader
 - Launch date: [FILL IN]
 - Key constraints: [FILL IN — regulatory, multi-region, accessibility requirements if any]
 </project_context>
 
 <codebase_stack>
-- Storefront: BigCommerce Stencil (Cornerstone-based Apex fork) — not Catalyst/Next.js
-- Templating: Handlebars (.html templates in theme/templates/)
-- Styling: SCSS (theme/assets/scss/) bundled via webpack
-- JS: Custom JS in theme/assets/js/, webpack-bundled, PageManager pattern
-- Build tool: webpack (webpack.common.js / webpack.dev.js / webpack.prod.js) + Grunt
-- Stencil CLI: @bigcommerce/stencil-cli (global)
-- Package manager: npm (theme/package.json and app/package.json — no monorepo tooling yet)
-- Node version: >= 18.x
-- Backend: Node.js/Express (app/src/index.js)
-  - Framework: Express 4.x
-  - HTTP client: axios
-  - Auth: express-session + BC OAuth 2.0 callback flow
-  - Config: dotenv (app/.env — never committed)
-- REST Management API scopes used: Products (v3/catalog/products), Orders, Webhooks (v3/hooks)
-- BC credentials location: app/.env (BC_CLIENT_ID, BC_CLIENT_SECRET, BC_ACCESS_TOKEN, BC_STORE_HASH)
-- Build command (theme): stencil bundle → uploads .zip via store admin
-- Dev command (theme): stencil start (localhost:3000 proxy)
-- Dev command (app): npm run dev (nodemon, port 3000 — change PORT in app/.env if running both)
-- Deploy (theme): stencil bundle → upload zip to store admin or via API
-- Deploy (app): [FILL IN — Heroku / Railway / EC2 / other]
-- Tunnelling for webhooks/callbacks: ngrok (ngrok http 3000)
-- Testing: [FILL IN — no test framework configured yet]
-- Observability: [FILL IN]
+- Storefront: BigCommerce Stencil — Cornerstone 6.11.0 base (Apex fork), not Catalyst/Next.js
+- Theme engine: Handlebars v4 (templates in theme/templates/; layout in theme/templates/layout/base.html)
+- Styling: SCSS (theme/assets/scss/) — Foundation 5 + Citadel (BC design tokens) + custom BEM-like components; autoprefixer enabled (> 1%, last 2 versions, Firefox ESR)
+- JS: ES6 transpiled to ES5 via Babel (@babel/preset-env + corejs 3); Webpack 5 bundler; jQuery v3.6.1 globally injected via ProvidePlugin; PageManager class pattern for all page-level logic (extend PageManager, override onReady())
+- Build tool: Webpack 5 (webpack.common.js / webpack.dev.js / webpack.prod.js) + Grunt (eslint + svgstore tasks)
+  - JS entry: theme/assets/js/app.js → bundles: theme-bundle.main.js, theme-bundle.head_async.js, theme-bundle.font.js, theme-bundle.polyfills.js
+  - JS output: theme/assets/dist/
+- Package manager: npm (theme/package.json) — NOT pnpm; no monorepo/workspace tooling
+- Node version: >= 18.x (currently v20.16.0)
+- npm version: >= 9.x
+- Stencil CLI: @bigcommerce/stencil-cli v9.0.2 (global install)
+- Testing: Jest 27 (test files: theme/assets/js/test-unit/**/*.spec.js; run: cd theme && npm test)
+- Linting: ESLint with Airbnb + Prettier extends; babel-eslint parser (cd theme && npm run lint)
+- CSS linting: stylelint with stylelint-config-sass-guidelines + stylelint-scss (cd theme && npm run stylelint)
+- Code format: Prettier — singleQuote: true, trailingComma: es5, printWidth: 120, tabWidth: 4, semi: true, arrowParens: avoid
+- B2B: BundleB2B (B3) auto-loader — script injected + window.b3themeConfig configured in theme/assets/js/theme/global.js
+- Backend: Node.js/Express app expected in app/ — NOT PRESENT in this repo (may be a separate repository)
+- REST Management API scopes used: Products (v3/catalog), Orders, Webhooks (v3/hooks)
+- Build command: cd theme && npm run build (webpack.prod.js → assets/dist/)
+- Dev command: cd theme && stencil start (proxies to BC store, localhost:3000)
+- Test command: cd theme && npm test
+- Lint command: cd theme && npm run lint && npm run stylelint
+- Format command: cd theme && npm run format
+- Deploy: cd theme && stencil bundle → upload .zip to BC store admin (Storefront → Themes → Upload) or via Themes API
+- CI/CD: None configured — deployment is manual
+- Tunnelling for webhooks/local callbacks: ngrok (ngrok http 3000)
+- Observability: Not configured
 </codebase_stack>
 
 <system_instructions>

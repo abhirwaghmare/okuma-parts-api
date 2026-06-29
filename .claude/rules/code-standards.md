@@ -26,12 +26,13 @@ Universal baseline standards. Projects add their own conventions below or via `/
 - Prefer `addEventListener` over inline event handlers.
 - Clean up event listeners and timers on component teardown (`useEffect` cleanup).
 
-### CSS / Tailwind
-- Tailwind utilities are preferred for Catalyst projects -- compose with `clsx` and `tailwind-merge`.
-- Mobile-first breakpoints (`sm`, `md`, `lg`, `xl`).
-- Use logical properties (`ms-`, `me-`, `ps-`, `pe-`) when supported for RTL safety.
-- For non-Tailwind CSS, keep selectors shallow -- max 3 levels of nesting.
-- Use design tokens (CSS custom properties or Tailwind config) for colors, spacing, typography.
+### CSS / SCSS
+- This project uses SCSS — not Tailwind. Do not introduce Tailwind or `clsx`/`tailwind-merge`.
+- Mobile-first breakpoints using Foundation 5 breakpoint variables.
+- Use `settings/` SCSS variables for colors, spacing, and typography — never hardcode values.
+- Max selector nesting: 3 levels (enforced by stylelint).
+- Max compound selectors per rule: 4 (enforced by stylelint).
+- Component SCSS files go in `theme/assets/scss/components/`; page-level styles go in `theme/assets/scss/layouts/`.
 
 ## Testing
 
@@ -46,10 +47,10 @@ Universal baseline standards. Projects add their own conventions below or via `/
 - Do not test private functions directly -- test through the public API.
 
 ### Mocking
-- Mock external dependencies (BC GraphQL, REST endpoints) with MSW. Do not mock `client.fetch` directly with `vi.mock`.
-- Mock Next.js helpers (`next/headers`, `next/cache`, `next/navigation`) with `vi.mock`.
-- Use the project's test framework (Vitest, Jest, etc.) -- do not mix frameworks.
-- Keep mocks minimal -- only mock what the test needs.
+- This project uses Jest 27 — do not introduce Vitest or MSW.
+- Mock jQuery/DOM dependencies with `jest.spyOn` or `jest.fn()` on `jQuery.fn` methods.
+- Use `jest.mock()` for module-level mocks (e.g., stencil-utils API calls).
+- Keep mocks minimal — only mock what the test needs.
 
 ## General
 
@@ -78,57 +79,79 @@ Universal baseline standards. Projects add their own conventions below or via `/
 
 ---
 
-## BigCommerce (Catalyst)
+## BigCommerce Stencil (Okuma BC)
 
-### Secrets and tokens
-- Never expose `BIGCOMMERCE_ACCESS_TOKEN` (REST Management `X-Auth-Token`) to the browser bundle. Server code only.
-- Never expose the customer impersonation token to the browser bundle. Server code only — attach via `client.fetch({ customerAccessToken })`.
-- `BIGCOMMERCE_STOREFRONT_TOKEN` is the JWT for GraphQL Storefront. Treat as server-side by default. Use `BIGCOMMERCE_STOREFRONT_UNAUTHENTICATED_TOKEN` (CORS-locked) only when client-side anonymous reads are genuinely required.
-- `AUTH_SECRET`, `B2B_API_TOKEN`, `MAKESWIFT_SITE_API_KEY`: server only. Rotate annually or on suspected compromise.
-- `NEXT_PUBLIC_*` prefix means it ships to the browser. Use only for non-sensitive values.
+### JS — PageManager pattern
+- All page-level logic lives in a class that extends `PageManager` (from `theme/assets/js/theme/page-manager.js`).
+- Override `onReady()` — this is the entry point called after jQuery DOM-ready.
+- Export the class as `export default`. Register it in `theme/assets/js/app.js` `pageClasses` map.
+- Use dynamic `import()` in `app.js` for code-splitting per page type — do not add synchronous imports to the top of `app.js`.
+- jQuery (`$`) is globally available via webpack ProvidePlugin — no need to import it in page modules.
 
-### Channel scoping
-- Every GraphQL Storefront request is channel-scoped via `BIGCOMMERCE_CHANNEL_ID`.
-- For multi-storefront, resolve channel per request via `beforeRequest` and scope cart cookies per channel.
-- Never share a `cartId` cookie across channels — they are isolated.
+### JS — Formatting
+- **CONFLICT resolved (project wins):** Tab width is **4 spaces** (Prettier config), not 2.
+- Line width: **120 characters** (Prettier printWidth).
+- Quotes: **single quotes** (`singleQuote: true`).
+- Semicolons: **required** (`semi: true`).
+- Arrow function parens: **omit for single params** (`arrowParens: 'avoid'` — e.g., `x => x + 1`).
+- Trailing commas in ES5-compatible contexts only.
 
-### GraphQL hygiene
-- Use `gql.tada` typed queries via `graphql()` from `core/client/graphql.ts`. Do not call raw `fetch` to the GraphQL endpoint.
-- Reuse fragments from `core/client/fragments/` (e.g., `PricingFragment`).
-- Honour fragment masking — consume `FragmentOf<T>` via `readFragment(Fragment, masked)`.
-- Selection sets must be lean — every requested field consumed by the UI.
+### JS — Naming
+- Page class files: camelCase matching the page type (e.g., `cart.js`, `product.js`).
+- Page class names: PascalCase matching the file (e.g., `Cart`, `Product`, `PageManager`).
+- Component utilities in `theme/assets/js/theme/common/` — named by function (e.g., `carousel.js`, `faceted-search.js`).
 
-### Webhook safety
-- Verify every incoming BC webhook with `crypto.timingSafeEqual` against `BIGCOMMERCE_WEBHOOK_SECRET`.
-- Idempotency via `payload.hash` stored in Redis/DB with 24h TTL.
-- Respond 2xx within 5s. Push heavy work to a queue.
-- Handlers must set `export const runtime = 'nodejs'` and `export const dynamic = 'force-dynamic'`.
+### SCSS — Structure (ITCSS-adjacent)
+- `settings/` — Foundation + Citadel + global variables; **source of truth for all design values**.
+- `tools/` — Mixins and functions (e.g., `remCalc`, `addFocusTooltip`).
+- `components/` — BEM-like component styles (e.g., `_hero-carousel.scss`, `_product-card.scss`).
+- `layouts/` — Page-level grid and structural styles.
+- `utilities/` — Single-responsibility helper classes.
+- Import order in `theme.scss`: settings → tools → base → components → layouts → utilities → vendor.
 
-### Customer JWT SSO
-- Sign JWTs with `BIGCOMMERCE_CLIENT_SECRET`, algorithm HS256, `expiresIn: '30s'`, include `iss`, `iat`, `jti`, `operation: 'customer_login'`, `store_hash`, `customer_id`, `channel_id`.
-- Verify signature and audience server-side before signing — never sign for a customer the user has not authenticated.
+### SCSS — Naming
+- BEM-like with component prefix: `.heroCarousel`, `.heroCarousel-slide`, `.heroCarousel-slide--first`.
+- Stencil component names: `.productView-*`, `.pagination-*`, `.navPages-*` (match existing conventions).
+- Custom components: `.[component]-[element]--[modifier]` pattern.
 
-### RSC and client boundary
-- Default to RSC for data fetching. `'use client'` only when interactivity demands it.
-- Never call the GraphQL Storefront or REST Management API from a client component — all data fetching lives in RSC or server actions.
-- Pass only serialisable props from RSC to client components.
+### Handlebars templates
+- Layouts in `theme/templates/layout/` — extend `base.html` via `{{#block "name"}}{{/block}}`.
+- Page templates in `theme/templates/pages/` — one file per page type, lowercase-with-dashes naming.
+- Reusable partials in `theme/templates/components/` — included via `{{> components/path/to/partial}}`.
+- Use `{{ var }}` (HTML-escaped) for all user-generated content. Use `{{{ raw }}}` only for trusted server-rendered HTML (e.g., BC CMS content).
+- Use `{{cdn 'assets/...' resourceHint='preload' as='script'}}` for all asset references — never hardcode paths.
+- Use `stencilConfig('setting-id')` in SCSS and `{{theme_settings.setting-id}}` in templates for theme settings.
 
-### Caching
-- Tag every cached query. Match cache TTL to data lifecycle.
-- Customer-scoped queries (cart, customer, orders): `cache: 'no-store'`. Never `force-cache`.
-- After every cart/coupon/customer mutation: `revalidateTag(TAGS.cart)` (or relevant tag).
-- Webhook handlers invalidate exactly the tags that match the event scope.
+### BC Stencil API
+- Use `@bigcommerce/stencil-utils` for all Stencil JS API calls (cart, product options, faceted search, etc.).
+- Import from the installed package: `import utils from '@bigcommerce/stencil-utils'`.
+- Pass `context` from `stencilBootstrap` (available in `onReady(context)`) to utility calls that require store context.
 
-### Server actions
-- Validate every `FormData` input with Zod (Conform's `parseWithZod` is the Catalyst pattern).
-- Mask BC error messages before returning to the client — never surface raw upstream errors.
-- Use `'use server'` directive at the top of the file.
+### Secrets and credentials
+- Never commit `.stencil` or `config.stencil.json` — both are gitignored and contain auth tokens and store URLs.
+- Never expose BC `X-Auth-Token` (REST Management API key) in theme JS — it ships to the browser.
+- Any backend credentials (BC_CLIENT_ID, BC_CLIENT_SECRET, BC_ACCESS_TOKEN) belong in `app/.env` only.
+
+### Webhook safety (backend)
+- Verify every incoming BC webhook with HMAC-SHA256 using `BC_CLIENT_SECRET` and `crypto.timingSafeEqual`.
+- Respond 2xx within 5 seconds. Offload heavy processing asynchronously.
 
 ### Accessibility
-- WCAG 2.2 AA minimum. Use semantic HTML5 elements; reach for ARIA only when semantics fall short.
-- Every interactive element keyboard reachable. Focus visible. Color contrast meets AA.
-- `next/image` with explicit width/height to avoid CLS; use BC `urlTemplate(lossy: true)` for image URLs.
+- WCAG 2.2 AA minimum. Use semantic HTML5 elements in Handlebars templates.
+- Every interactive element must be keyboard-reachable with visible focus. Use `_focus-tooltip.scss` mixin (`addFocusTooltip`) for custom focus indicators.
+- Use `lazysizes` (already bundled) for lazy image loading — add `class="lazyload"` and `data-src`.
+- Use `focus-trap` (already bundled) for modal/dialog focus management.
+
+### Build and test commands
+- **Install:** `cd theme && npm install`
+- **Dev:** `cd theme && stencil start`
+- **Build:** `cd theme && npm run build`
+- **Test:** `cd theme && npm test`
+- **Lint JS:** `cd theme && npm run lint`
+- **Lint SCSS:** `cd theme && npm run stylelint`
+- **Format:** `cd theme && npm run format`
+- **Deploy:** `cd theme && stencil bundle` → upload `.zip` to BC store admin
 
 ---
 
-*Project-specific standards are added below by `/initialize-setup` or manually by the project team.*
+*Project-specific standards populated by `/initialize-setup` on 2026-06-29.*
