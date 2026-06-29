@@ -6,11 +6,11 @@
 // Local variables
 // -----------------------------------------------------------------------------
 
-$partsBook-primary:             #1a6dcc;
-$partsBook-primary-active:      #e74c3c;
-$partsBook-tooltip-bg:          #1a1a2e;
+$partsBook-primary:             stencilColor("color-primary");
+$partsBook-primary-active:      $color-error;
+$partsBook-tooltip-bg:          color("greys", "darkest");
 $partsBook-tooltip-shadow:      0 8px 32px rgba(0, 0, 0, 0.3);
-$partsBook-row-active-bg:       #eef3ff;
+$partsBook-row-active-bg:       color("primary", "light");
 $partsBook-select-gap:          spacing("single");
 $partsBook-border:              container("border");
 $partsBook-radius:              $global-radius;
@@ -127,22 +127,14 @@ $partsBook-zoom-btn-size:       remCalc(44px);
 .parts-book__workspace {
     display: none;
 
-    @include breakpoint("large") {
-        display: none;
+    &.is-visible {
+        display: block;
 
-        &.is-visible {
+        @include breakpoint("large") {
             display: grid;
             gap: spacing("single");
             grid-template-columns: 1fr 1fr;
         }
-    }
-}
-
-.parts-book__workspace.is-visible {
-    display: block;
-
-    @include breakpoint("large") {
-        display: grid;
     }
 }
 
@@ -201,7 +193,7 @@ $partsBook-zoom-btn-size:       remCalc(44px);
     color: $color-white;
     cursor: pointer;
     display: flex;
-    font-size: 11px;
+    font-size: $fontSize-tiny;
     font-weight: fontWeight("bold");
     height: $partsBook-callout-size;
     justify-content: center;
@@ -315,14 +307,14 @@ $partsBook-zoom-btn-size:       remCalc(44px);
     border-radius: remCalc(8px);
     box-shadow: $partsBook-tooltip-shadow;
     color: $color-white;
-    display: none;
+    display: block;
     min-width: remCalc(280px);
     padding: spacing("single");
     position: fixed;
     z-index: zIndex("overlay");
 
-    &.parts-book__tooltip--visible {
-        display: block;
+    &[hidden] {
+        display: none;
     }
 }
 

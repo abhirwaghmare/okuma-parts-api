@@ -66,6 +66,30 @@
     "webpack-cli": "^4.5.0",
     "webpack-merge": "^5.8.0"
   },
+  "jest": {
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/assets/js/test-unit"
+    ],
+    "moduleNameMapper": {
+      "^axios$": "<rootDir>/__mocks__/axios.js",
+      "^dotenv$": "<rootDir>/__mocks__/dotenv.js"
+    },
+    "transform": {
+      "^.+\\.js$": "babel-jest"
+    },
+    "transformIgnorePatterns": [
+      "/node_modules/"
+    ],
+    "coverageProvider": "v8",
+    "collectCoverageFrom": [
+      "../scripts/seed-bc-parts.js",
+      "../scripts/seed-bc-pages.js"
+    ],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/"
+    ]
+  },
   "scripts": {
     "build": "npx webpack --config webpack.prod.js",
     "buildDev": "npx webpack --config webpack.dev.js",

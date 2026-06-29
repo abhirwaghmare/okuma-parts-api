@@ -3,7 +3,7 @@
 {{#partial "page"}}
 
 {{#unless customer}}
-    <script>window.location.href = '/login.php?returnUrl=' + encodeURIComponent(window.location.pathname);</script>
+    <script>window.location.replace('/login.php?returnUrl=' + encodeURIComponent(window.location.pathname));</script>
 {{/unless}}
 
 {{> components/common/breadcrumbs breadcrumbs=breadcrumbs}}
@@ -93,7 +93,7 @@
             </div>
         </div>
 
-        <div class="parts-book__parts-table-container" role="region" aria-label="Parts list" aria-live="polite">
+        <div class="parts-book__parts-table-container" role="region" aria-label="Parts list">
             <table class="parts-book__table">
                 <caption class="visually-hidden">Parts list for selected assembly sheet</caption>
                 <thead>
@@ -120,10 +120,9 @@
 
     <div
         class="parts-book__tooltip"
-        role="dialog"
-        aria-modal="true"
+        role="region"
         aria-labelledby="pb-tooltip-name"
-        aria-hidden="true"
+        hidden
     >
         <div class="parts-book__tooltip-content">
             <div class="parts-book__tooltip-header">
@@ -139,6 +138,7 @@
                         aria-label="Decrease quantity"
                     >&#x2212;</button>
                     <input
+                        id="pb-tooltip-qty"
                         class="pb-qty-input"
                         type="number"
                         value="1"
@@ -163,12 +163,6 @@
     </div>
 
 </section>
-
-<script>
-    window.partsBookConfig = {
-        apiUrl: '{{theme_settings.parts_book_api_url}}'
-    };
-</script>
 
 {{/partial}}
 

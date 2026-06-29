@@ -5,8 +5,9 @@ const prefersReducedMotion = () =>
 
 export default class PartsBook extends PageManager {
     onReady() {
-        const configUrl = (window.partsBookConfig || {}).apiUrl || '';
-        // Fall back to localhost:3001 for Stencil dev (stencil start runs on 3000, backend on 3001)
+        // API URL injected server-side via {{inject 'partsBookApiUrl' theme_settings.parts_book_api_url}}
+        // and available on this.context. Fall back to localhost:3001 for Stencil dev.
+        const configUrl = (this.context && this.context.partsBookApiUrl) || '';
         this._apiUrl = configUrl || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : '');
         this._toc = null;
         this._currentPdfId = null;
@@ -216,9 +217,18 @@ export default class PartsBook extends PageManager {
                 'data-part-no': part.partNo,
             });
 
+            const $qtyInput = $('<input>', {
+                type: 'number',
+                class: 'parts-book__td-qty-input form-input',
+                value: 1,
+                min: 1,
+                'aria-label': `Order quantity for ${part.partNo}`,
+            }).css({ width: '4rem', textAlign: 'center' });
+
             $row.append($('<td>', { class: 'parts-book__td', text: part.calloutNumber }));
             $row.append($('<td>', { class: 'parts-book__td', text: part.partNo }));
-            $row.append($('<td>', { class: 'parts-book__td', text: part.description }));
+            $row.append($('<td>', { class: 'parts-book__td', text: part.name || '—' }));
+            $row.append($('<td>', { class: 'parts-book__td', text: part.description || '—' }));
             $row.append($('<td>', { class: 'parts-book__td', text: part.qty }));
             $row.append($('<td>', { class: 'parts-book__td', text: price }));
             $row.append(
@@ -226,6 +236,7 @@ export default class PartsBook extends PageManager {
                     $('<span>', { class: `badge ${inStockClass}`, text: inStockText })
                 )
             );
+            $row.append($('<td>', { class: 'parts-book__td parts-book__td--qty' }).append($qtyInput));
 
             const $actionCell = $('<td>', { class: 'parts-book__td' });
             if (part.productId) {
@@ -262,7 +273,8 @@ export default class PartsBook extends PageManager {
         $('.parts-book__table').off('click.pb-table').on('click.pb-table', '.pb-table-add-to-cart', e => {
             const $btn = $(e.currentTarget);
             const productId = parseInt($btn.data('product-id'), 10);
-            const qty = parseInt($btn.data('qty'), 10) || 1;
+            const $row = $btn.closest('tr');
+            const qty = parseInt($row.find('.parts-book__td-qty-input').val(), 10) || 1;
             this._addToCart(productId, qty);
         });
     }
@@ -313,8 +325,7 @@ export default class PartsBook extends PageManager {
         $tooltip.find('.pb-qty-input').val(1);
 
         $tooltip
-            .attr({ role: 'dialog', 'aria-modal': 'false', 'aria-label': `Part details: ${part.partNo}` })
-            .addClass('parts-book__tooltip--visible');
+            .removeAttr('hidden');
 
         if (calloutEl) {
             this._positionTooltip($tooltip[0], calloutEl);
@@ -345,7 +356,7 @@ export default class PartsBook extends PageManager {
     }
 
     _hideTooltip() {
-        $('.parts-book__tooltip').removeClass('parts-book__tooltip--visible');
+        $('.parts-book__tooltip').attr('hidden', '');
         if (this._activeCallout != null) {
             const safeActive = String(this._activeCallout).replace(/["\\]/g, '');
             $(`.parts-book__callout[data-callout-no="${safeActive}"]`).trigger('focus');
@@ -356,7 +367,7 @@ export default class PartsBook extends PageManager {
         $('.parts-book__tooltip-close').on('click', () => this._hideTooltip());
 
         $(document).off('keydown.pb-tooltip').on('keydown.pb-tooltip', e => {
-            if (e.key === 'Escape' && $('.parts-book__tooltip').hasClass('parts-book__tooltip--visible')) {
+            if (e.key === 'Escape' && !$('.parts-book__tooltip').attr('hidden')) {
                 this._hideTooltip();
             }
         });
