@@ -1,4 +1,5 @@
 {{inject 'partsBookApiUrl' theme_settings.parts_book_api_url}}
+{{inject 'template' template}}
 
 {{#partial "page"}}
 
@@ -95,8 +96,7 @@
 
         <div class="parts-book__parts-table-container" role="region" aria-label="Parts list">
             <table class="parts-book__table">
-                <caption class="visually-hidden">Parts list for selected assembly sheet</caption>
-                <thead>
+                <thead class="parts-book__thead" hidden>
                     <tr>
                         <th scope="col" class="parts-book__th">#</th>
                         <th scope="col" class="parts-book__th">Part #</th>

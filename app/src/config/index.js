@@ -14,11 +14,11 @@ const config = {
         apiBaseUrl: `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}`,
     },
     partsBook: {
-        dataRoot: process.env.PARTS_BOOK_DATA_ROOT,
+        cdnBaseUrl: process.env.PARTS_BOOK_CDN_BASE_URL,
     },
 };
 
-const required = ['BC_ACCESS_TOKEN', 'BC_STORE_HASH', 'SESSION_SECRET', 'PARTS_BOOK_DATA_ROOT'];
+const required = ['BC_ACCESS_TOKEN', 'BC_STORE_HASH', 'SESSION_SECRET', 'PARTS_BOOK_CDN_BASE_URL'];
 const missing = required.filter(key => !process.env[key]);
 if (missing.length) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);

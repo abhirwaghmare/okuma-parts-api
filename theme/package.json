@@ -67,27 +67,27 @@
     "webpack-merge": "^5.8.0"
   },
   "jest": {
+    "rootDir": "..",
     "testEnvironment": "node",
     "roots": [
-      "<rootDir>/assets/js/test-unit"
+      "<rootDir>/theme/assets/js/test-unit"
     ],
     "moduleNameMapper": {
-      "^axios$": "<rootDir>/__mocks__/axios.js",
-      "^dotenv$": "<rootDir>/__mocks__/dotenv.js"
+      "^axios$": "<rootDir>/theme/__mocks__/axios.js",
+      "^dotenv$": "<rootDir>/theme/__mocks__/dotenv.js"
     },
     "transform": {
       "^.+\\.js$": "babel-jest"
     },
     "transformIgnorePatterns": [
-      "/node_modules/"
+      "/node_modules/",
+      "/scripts/"
     ],
+    "testTimeout": 15000,
     "coverageProvider": "v8",
     "collectCoverageFrom": [
-      "../scripts/seed-bc-parts.js",
-      "../scripts/seed-bc-pages.js"
-    ],
-    "coveragePathIgnorePatterns": [
-      "/node_modules/"
+      "scripts/seed-bc-parts.js",
+      "scripts/seed-bc-pages.js"
     ]
   },
   "scripts": {

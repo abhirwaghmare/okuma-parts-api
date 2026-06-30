@@ -311,7 +311,7 @@ $partsBook-zoom-btn-size:       remCalc(44px);
     min-width: remCalc(280px);
     padding: spacing("single");
     position: fixed;
-    z-index: zIndex("overlay");
+    z-index: zIndex("highest");
 
     &[hidden] {
         display: none;

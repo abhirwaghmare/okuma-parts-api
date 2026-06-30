@@ -57,14 +57,27 @@ export default class PartsBook extends PageManager {
         const $select = $('#pb-select-machine');
         $select.find('option:not(:first)').remove();
 
-        documents.forEach(doc => {
-            $select.append($('<option>', { value: doc.id, text: doc.label }));
-        });
+        const preselect = new URLSearchParams(window.location.search).get('machine');
+        const preselectDoc = preselect && documents.find(d => d.id === preselect);
+
+        if (preselectDoc) {
+            // Arrived via homepage link — show only the preselected machine
+            $select.append($('<option>', { value: preselectDoc.id, text: preselectDoc.label }));
+        } else {
+            documents.forEach(doc => {
+                $select.append($('<option>', { value: doc.id, text: doc.label }));
+            });
+        }
 
         $select.off('change.pb').on('change.pb', () => {
             const pdfId = $select.val();
             if (pdfId) this._onMachineChange(pdfId);
         });
+
+        if (preselectDoc) {
+            $select.val(preselect);
+            this._onMachineChange(preselect);
+        }
     }
 
     _onMachineChange(pdfId) {
@@ -87,7 +100,18 @@ export default class PartsBook extends PageManager {
         });
 
         $assemblySelect.prop('disabled', false).val('');
-        $('.parts-book__workspace').removeClass('is-visible');
+
+        {
+            // Reset the panel until assembly is selected
+            $('.parts-book__workspace').removeClass('is-visible');
+            $('img.parts-book__diagram-img').attr('src', '');
+            $('.parts-book__callouts-layer').empty();
+            $('.parts-book__tbody').empty();
+            $('.parts-book__thead').prop('hidden', true);
+            $('.parts-book__tooltip').attr('hidden', '');
+            this._currentParts = [];
+            this._activeCallout = null;
+        }
 
         $assemblySelect.off('change.pb').on('change.pb', () => {
             const assemblySlug = $assemblySelect.val();
@@ -113,6 +137,9 @@ export default class PartsBook extends PageManager {
         });
 
         $sheetSelect.prop('disabled', false).val('');
+
+        // Show the assembly overview image in the panel
+        this._showPreviewImage(assembly.overview_image, assembly.label);
 
         $sheetSelect.off('change.pb').on('change.pb', () => {
             const sheetSlug = $sheetSelect.val();
@@ -153,8 +180,30 @@ export default class PartsBook extends PageManager {
             });
     }
 
+    _showPreviewImage(imageUrl, label) {
+        this._setZoom(1);
+        this._currentParts = [];
+        this._activeCallout = null;
+
+        const resolvedUrl =
+            imageUrl && imageUrl.startsWith('/') ? `${this._apiUrl}${imageUrl}` : (imageUrl || '');
+
+        $('img.parts-book__diagram-img').attr({
+            alt: label ? `Overview: ${label}` : 'Overview',
+            src: resolvedUrl,
+        });
+        $('.parts-book__callouts-layer').empty();
+        $('.parts-book__tbody').empty();
+        $('.parts-book__thead').prop('hidden', true);
+        $('.parts-book__tooltip').attr('hidden', '');
+        $('.parts-book__workspace-error').hide();
+        $('.parts-book__workspace').removeClass('is-loading').addClass('is-visible').attr('aria-busy', 'false');
+    }
+
     _renderDiagram(diagramUrl, sheetLabel) {
         this._setZoom(1);
+        const resolvedUrl =
+            diagramUrl && diagramUrl.startsWith('/') ? `${this._apiUrl}${diagramUrl}` : diagramUrl;
         const $img = $('img.parts-book__diagram-img');
         $img
             .attr('alt', sheetLabel ? `Assembly diagram: ${sheetLabel}` : 'Assembly diagram')
@@ -162,9 +211,8 @@ export default class PartsBook extends PageManager {
             .on('load.pb', () => {
                 this._renderCallouts(this._currentParts);
             })
-            .attr('src', diagramUrl);
+            .attr('src', resolvedUrl);
 
-        // If the browser served the image from cache, the load event already fired.
         if ($img[0].complete) {
             this._renderCallouts(this._currentParts);
         }
@@ -268,6 +316,8 @@ export default class PartsBook extends PageManager {
 
             $tbody.append($row);
         });
+
+        $('.parts-book__thead').prop('hidden', (parts || []).length === 0);
 
         // Event delegation for add-to-cart buttons in the table
         $('.parts-book__table').off('click.pb-table').on('click.pb-table', '.pb-table-add-to-cart', e => {

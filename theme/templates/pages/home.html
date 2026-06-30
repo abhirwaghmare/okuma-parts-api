@@ -109,10 +109,16 @@ blog:
     }
     .machine-card__photo {
         width: 100%;
-        height: 160px;
-        object-fit: cover;
+        height: 200px;
+        object-fit: contain;
         display: block;
+        background: #f5f6f8;
+        padding: 12px;
+        box-sizing: border-box;
+    }
+    .machine-card__photo--placeholder {
         background: #e8eaed;
+        height: 200px;
     }
     .machine-card__body {
         padding: 16px;
@@ -562,79 +568,16 @@ blog:
     <section class="section">
         <div class="section__head">
             <h2 class="section__title">My Registered Machines</h2>
-            <a href="/account.php?action=account_details" class="section__link">View All →</a>
+            <a href="/parts-book" class="section__link">View All →</a>
         </div>
         <div class="machine-grid" id="machine-grid">
-            <!-- Machine cards injected here by app JS -->
-
-            <!-- Card 1 -->
-            <div class="machine-card">
-                <img class="machine-card__photo" src="dash-machine-lu300m.png" alt="LU300-M" />
-                <div class="machine-card__body">
-                    <div>
-                        <div class="machine-card__name">LU300-M</div>
-                        <div class="machine-card__serial">Serial: M5-2891-K</div>
-                    </div>
-                    <div class="machine-card__divider"></div>
-                    <div class="machine-card__foot">
-                        <div>
-                            <div class="machine-card__reg-label">Registered</div>
-                            <div class="machine-card__reg-date">12 Oct 2024</div>
-                        </div>
-                        <button class="btn-browse" onclick="openModal('LU300-M', 'M5-2891-K')">
-                            Browse Parts Book
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Card 2 -->
-            <div class="machine-card">
-                <img class="machine-card__photo" src="dash-machine-multus.png" alt="MULTUS U3000" />
-                <div class="machine-card__body">
-                    <div>
-                        <div class="machine-card__name">MULTUS U3000</div>
-                        <div class="machine-card__serial">Serial: MU-9102-L</div>
-                    </div>
-                    <div class="machine-card__divider"></div>
-                    <div class="machine-card__foot">
-                        <div>
-                            <div class="machine-card__reg-label">Registered</div>
-                            <div class="machine-card__reg-date">05 Jan 2025</div>
-                        </div>
-                        <button class="btn-browse" onclick="openModal('MULTUS U3000', 'MU-9102-L')">
-                            Browse Parts Book
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Card 3 -->
-            <div class="machine-card">
-                <img class="machine-card__photo" src="dash-machine-lb2000.png" alt="LB2000 EX III" />
-                <div class="machine-card__body">
-                    <div>
-                        <div class="machine-card__name">LB2000 EX III</div>
-                        <div class="machine-card__serial">Serial: LB-4431-M</div>
-                    </div>
-                    <div class="machine-card__divider"></div>
-                    <div class="machine-card__foot">
-                        <div>
-                            <div class="machine-card__reg-label">Registered</div>
-                            <div class="machine-card__reg-date">18 Feb 2025</div>
-                        </div>
-                        <button class="btn-browse" onclick="openModal('LB2000 EX III', 'LB-4431-M')">
-                            Browse Parts Book
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <p id="machine-grid-loading" style="color:#717171;font-size:14px;">Loading machines…</p>
         </div>
     </section>
 
     <!-- Quick Links -->
     <div class="quick-links">
-        <a href="/search.php" class="link-card">
+        <a href="/parts-book" class="link-card">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path
                     d="M4 19.5A2.5 2.5 0 016.5 17H20"
@@ -781,91 +724,73 @@ blog:
     </section>
 </div>
 
-<!-- Browse Parts Book Modal -->
-<div class="modal-overlay" id="partsModalOverlay" onclick="handleOverlayClick(event)">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-        <div class="modal__header">
-            <h2 class="modal__title" id="modalTitle">Browse Parts Book</h2>
-            <button class="modal__close" onclick="closeModal()" aria-label="Close">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M5 5L15 15M15 5L5 15" stroke="white" stroke-width="2" stroke-linecap="round" />
-                </svg>
-            </button>
-        </div>
-        <div class="modal__body">
-            <p class="modal__instruction">Select Parts Book</p>
-            <div class="modal__book-list">
-                <div class="book-option is-selected" data-pub="LE15-221-R1 Jan. 2008" onclick="selectBook(this)">
-                    <div class="book-option__radio"></div>
-                    <div class="book-option__info">
-                        <div class="book-option__title" id="bookTitle1">Parts Book 1</div>
-                        <div class="book-option__line" id="bookSerial1"></div>
-                        <div class="book-option__line">Pub No. LE15-221-R1 Jan. 2008</div>
-                    </div>
-                </div>
-                <div class="book-option" data-pub="LE15-173-R2 Aug. 2003" onclick="selectBook(this)">
-                    <div class="book-option__radio"></div>
-                    <div class="book-option__info">
-                        <div class="book-option__title" id="bookTitle2">Parts Book 2</div>
-                        <div class="book-option__line" id="bookSerial2"></div>
-                        <div class="book-option__line">Pub No. LE15-173-R2 Aug. 2003</div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal__divider"></div>
-            <div class="modal__actions">
-                <button class="modal-btn modal-btn--cancel" onclick="closeModal()">Cancel</button>
-                <button class="modal-btn modal-btn--proceed" onclick="proceedToBook()">Proceed</button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <script>
-    function openModal(model, serial) {
-        document.getElementById('bookTitle1').textContent = model + '- Parts Book 1';
-        document.getElementById('bookTitle2').textContent = model + '- Parts Book 2';
-        document.getElementById('bookSerial1').textContent = 'Serial: ' + serial;
-        document.getElementById('bookSerial2').textContent = 'Serial: ' + serial;
-        var overlay = document.getElementById('partsModalOverlay');
-        overlay.classList.add('is-open');
-        document.body.style.overflow = 'hidden';
+(function () {
+    var API_URL = window.location.port === '3000' ? 'http://' + window.location.hostname + ':3001' : '';
+    var customerId = {{#if customer}}{{customer.id}}{{else}}0{{/if}};
+
+    function formatDate(iso) {
+        if (!iso) return 'Pending Install';
+        var d = new Date(iso);
+        return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     }
 
-    function closeModal() {
-        document.getElementById('partsModalOverlay').classList.remove('is-open');
-        document.body.style.overflow = '';
+    function buildCard(machine) {
+        var imgHtml = machine.imageUrl
+            ? '<img class="machine-card__photo" src="' + machine.imageUrl + '" alt="' + machine.model + '" loading="lazy" />'
+            : '<div class="machine-card__photo machine-card__photo--placeholder"></div>';
+
+        var partsBookHref = machine.pubNo
+            ? '/parts-book?machine=' + encodeURIComponent(machine.pubNo)
+            : '/parts-book';
+
+        var serialHtml = machine.serial
+            ? '<div class="machine-card__serial">Serial: ' + machine.serial + '</div>'
+            : '';
+
+        var regHtml = machine.installDate
+            ? '<div>'
+            +   '<div class="machine-card__reg-label">REGISTERED</div>'
+            +   '<div class="machine-card__reg-date">' + formatDate(machine.installDate) + '</div>'
+            + '</div>'
+            : '';
+
+        return '<div class="machine-card">'
+            + imgHtml
+            + '<div class="machine-card__body">'
+            +   '<div>'
+            +     '<div class="machine-card__name">' + (machine.model || machine.name || '') + '</div>'
+            +     serialHtml
+            +   '</div>'
+            +   '<div class="machine-card__divider"></div>'
+            +   '<div class="machine-card__foot">'
+            +     regHtml
+            +     '<a href="' + partsBookHref + '" class="btn-browse">Browse Parts Book</a>'
+            +   '</div>'
+            + '</div>'
+            + '</div>';
     }
 
-    function handleOverlayClick(event) {
-        if (event.target === document.getElementById('partsModalOverlay')) {
-            closeModal();
-        }
-    }
+    var endpoint = customerId
+        ? API_URL + '/api/customer/' + customerId + '/machines'
+        : API_URL + '/api/machines';
 
-    function selectBook(el) {
-        var options = document.querySelectorAll('.book-option');
-        for (var i = 0; i < options.length; i++) {
-            options[i].classList.remove('is-selected');
-        }
-        el.classList.add('is-selected');
-    }
-
-    function proceedToBook() {
-        var options = document.querySelectorAll('.book-option');
-        var selectedIndex = 0;
-        options.forEach(function (opt, i) {
-            if (opt.classList.contains('is-selected')) selectedIndex = i;
+    fetch(endpoint)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            var machines = data.machines || [];
+            var grid = document.getElementById('machine-grid');
+            grid.innerHTML = machines.length
+                ? machines.map(buildCard).join('')
+                : '<p style="color:#666;font-size:14px;">No registered machines found.</p>';
+            var kpi = document.querySelector('[data-kpi="registered-machines"]');
+            if (kpi) kpi.textContent = machines.length;
+        })
+        .catch(function () {
+            var grid = document.getElementById('machine-grid');
+            grid.innerHTML = '<p style="color:#c00;font-size:14px;">Could not load machines.</p>';
         });
-        localStorage.setItem('okmPartsBook', selectedIndex === 0 ? 'book1' : 'book2');
-        window.location = '/parts-catalogue/';
-    }
-
-    document.addEventListener('keydown', function (event) {
-        if (event.key === 'Escape') {
-            closeModal();
-        }
-    });
+}());
 </script>
 
 {{/partial}} {{> layout/base}}

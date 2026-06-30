@@ -83,7 +83,9 @@ window.stencilBootstrap = function stencilBootstrap(pageType, contextJSON = null
                 }
 
                 // See if there is a page class default for a custom template
-                const customTemplateImporter = customClasses[context.template];
+                // Normalize backslashes (Windows dev) to forward slashes before lookup.
+                const normalizedTemplate = (context.template || '').replace(/\\/g, '/');
+                const customTemplateImporter = customClasses[normalizedTemplate];
                 if (typeof customTemplateImporter === 'function') {
                     importPromises.push(customTemplateImporter());
                 }
