@@ -165,7 +165,7 @@ router.get('/api/parts-book/machines/:pdfId/assemblies', async (req, res) => {
 
     const doc = (toc.documents || []).find(d => d.id === pdfId);
     if (!doc) {
-        return res.status(404).json({ error: `Machine '${pdfId}' not found.` });
+        return res.status(404).json({ error: `Document '${pdfId}' not found.` });
     }
 
     const cdnBase = config.partsBook.cdnBaseUrl;
