@@ -315,46 +315,29 @@ function parsePubNos(description) {
     return matches.map(m => m[1]);
 }
 
+// Cache for machine categories — avoids a BC API call on every request.
+// TTL of 5 minutes; categories change rarely in production.
+let _machineCategoryCache = null;
+let _machineCategoryCachedAt = 0;
+const MACHINE_CATEGORY_TTL = 5 * 60 * 1000;
+
 /**
- * GET /api/machines
+ * Fetch all machine model categories from BC OOTB categories API and cache
+ * the result for MACHINE_CATEGORY_TTL milliseconds.
  *
- * Returns all machine model categories (children of the four machine-type
- * parent categories) enriched with their BC category image and the parts-book
- * publication number parsed from the category description.
- */
-router.get('/api/machines', async (req, res) => {
-    try {
-        const response = await bcClient.get('/v3/catalog/categories', {
-            params: {
-                'parent_id:in': MACHINE_PARENT_IDS.join(','),
-                limit: 250,
-                include_fields: 'id,name,image_url,parent_id,description',
-            },
-        });
-
-        const machines = (response.data?.data || []).map(cat => ({
-            categoryId: cat.id,
-            name: cat.name,
-            machineType: PARENT_LABELS[cat.parent_id] || null,
-            imageUrl: cat.image_url || '',
-            pubNos: parsePubNos(cat.description),
-        }));
-
-        return res.json({ machines });
-    } catch (err) {
-        console.error('machines: BC category fetch failed:', err.message);
-        return res.status(500).json({ error: 'Could not load machine list.' });
-    }
-});
-
-/**
- * Fetch all machine model categories (children of MACHINE_PARENT_IDS) once
- * and return them as a lookup map keyed by normalised name.
- * Used to match a machine's model string to its BC category.
+ * BC OOTB: GET /v3/catalog/categories?parent_id:in=301,302,303,304
+ *   &include_fields=id,name,image_url,parent_id,description&limit=250
+ *
+ * image_url  → category image (direct from BC)
+ * description → pub numbers parsed out of the HTML description field
  *
  * @returns {Promise<Array>}
  */
 async function fetchMachineCategories() {
+    const now = Date.now();
+    if (_machineCategoryCache && now - _machineCategoryCachedAt < MACHINE_CATEGORY_TTL) {
+        return _machineCategoryCache;
+    }
     const response = await bcClient.get('/v3/catalog/categories', {
         params: {
             'parent_id:in': MACHINE_PARENT_IDS.join(','),
@@ -362,7 +345,7 @@ async function fetchMachineCategories() {
             include_fields: 'id,name,image_url,parent_id,description',
         },
     });
-    return (response.data?.data || []).map(cat => ({
+    _machineCategoryCache = (response.data && response.data.data ? response.data.data : []).map(cat => ({
         categoryId: cat.id,
         name: cat.name,
         machineType: PARENT_LABELS[cat.parent_id] || null,
@@ -370,7 +353,33 @@ async function fetchMachineCategories() {
         pubNos: parsePubNos(cat.description),
         _normalised: cat.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
     }));
+    _machineCategoryCachedAt = now;
+    return _machineCategoryCache;
 }
+
+/**
+ * GET /api/machines
+ *
+ * Returns all machine model categories enriched with BC category image
+ * (image_url from BC OOTB) and pub number parsed from the BC description field.
+ * Uses the shared fetchMachineCategories cache — no extra BC call when warm.
+ */
+router.get('/api/machines', async (req, res) => {
+    try {
+        const categories = await fetchMachineCategories();
+        const machines = categories.map(cat => ({
+            categoryId: cat.categoryId,
+            name: cat.name,
+            machineType: cat.machineType,
+            imageUrl: cat.imageUrl,
+            pubNos: cat.pubNos,
+        }));
+        return res.json({ machines });
+    } catch (err) {
+        console.error('machines: BC category fetch failed:', err.message);
+        return res.status(500).json({ error: 'Could not load machine list.' });
+    }
+});
 
 function matchCategory(modelName, categories) {
     if (!modelName) return null;
