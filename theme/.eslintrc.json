@@ -1,0 +1,19 @@
+{
+  "parser": "babel-eslint",
+  "extends": [
+    "airbnb",
+    "prettier"
+  ],
+  "env": {
+    "browser": true,
+    "es6": true,
+    "jquery": true
+  },
+  "rules": {
+    "import/no-unresolved": "off",
+    "import/extensions": "off",
+    "no-param-reassign": ["error", { "props": false }],
+    "class-methods-use-this": "off",
+    "no-underscore-dangle": ["error", { "allowAfterThis": true, "allowAfterSuper": true }]
+  }
+}

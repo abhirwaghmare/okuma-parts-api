@@ -1,0 +1,64 @@
+---
+description: Apex framework rules for BigCommerce (Catalyst) projects — agent orchestration, SDLC workflow, decision priority, and delegation patterns used across this repository.
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Apex Framework — Project Rules (BigCommerce / Catalyst)
+
+This project uses the Apex agentic framework adapted for BigCommerce headless storefronts on Catalyst (Next.js App Router). Honour the following at every turn.
+
+## Decision Priority
+1. User-provided input (designs, references, requirements)
+2. Project context and stack context in `CLAUDE.md`
+3. Project code standards in `.claude/rules/code-standards.md`
+4. Existing codebase patterns
+5. Framework best practices as a last resort
+
+## SDLC
+Plan → Implement → Build → Review → Test → Deploy → Validate
+
+- Complete each phase before the next. Do not skip or merge.
+- After writing code, run the build immediately.
+- Status line per phase transition; no summaries or permission requests between phases.
+- S/M complexity execute autonomously end-to-end. L tasks ask before Deploy only.
+
+## Agent Roster
+- `planner` — implementation planning, task classification, complexity sizing
+- `solutions-architect` — single-recommendation architectural decisions
+- `backend-dev` — server actions, route handlers, GraphQL queries, REST integrations, webhooks, customer auth, B2B
+- `frontend-dev` — RSC + client components, Tailwind, Makeswift, accessibility
+- `code-reviewer` — multi-lens review with autonomous fixes
+- `junits-specialist` — Vitest + RTL + MSW unit/integration tests
+- `validation-tester` — post-deploy validation (Chrome DevTools / Playwright)
+- `research-intelligence` — authoritative doc lookup (BC, Catalyst, Next.js, Makeswift)
+- `code-explorer` — codebase scan for reuse and convention fingerprinting
+- `functional-pmo` — backlog management (ADO/Jira via MCP)
+- `docs-scribe` — documentation
+- `bulk-bug-fixer` — multi-ticket bug analysis orchestrator
+
+## Skills (load on demand)
+- `bigcommerce-standards` — Catalyst, GraphQL Storefront, REST Management, B2B, Makeswift, webhooks, testing
+- `frontend-code-standards` — React/Next.js/Tailwind standards
+- `planning-standards` — task classification, implementation contracts, deployment planning
+- `bugfix-workflow` — single-ticket and bulk bug procedures
+- `figma-context`, `live-site-context`, `storybook-patterns`, `story-context` — input extractors
+- `initialize-setup` — populate CLAUDE.md sections from architect doc or codebase scan
+- `framework-guidance`, `skill-creator`, `skill-review` — framework maintenance
+
+## Delegation
+- Codebase discovery → `code-explorer`
+- External docs / API references → `research-intelligence`
+- Domain work → the specialist that owns it; the coordinator does not execute
+
+## Boundaries
+- Do not create agents, skills, commands, or hooks unless asked
+- Do not add dependencies unless asked
+- Confirm before destructive changes
+- Work within what exists
+
+## Security Defaults
+- Never expose `BIGCOMMERCE_ACCESS_TOKEN`, `AUTH_SECRET`, customer impersonation token, `B2B_API_TOKEN`, or `MAKESWIFT_SITE_API_KEY` to the browser bundle
+- Verify every webhook signature with `crypto.timingSafeEqual`
+- Validate every server action input with Zod
+- `cache: 'no-store'` for customer, cart, and order queries

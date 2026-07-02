@@ -1,0 +1,11 @@
+{
+  "extends": ["airbnb-base"],
+  "env": {
+    "node": true,
+    "es6": true
+  },
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
+    "no-param-reassign": ["error", { "props": false }]
+  }
+}

@@ -1,0 +1,207 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**/*)",
+
+      "Bash(cd:*)",
+      "Bash(ls:*)",
+      "Bash(pwd:*)",
+      "Bash(echo:*)",
+      "Bash(which:*)",
+      "Bash(tree:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(touch:*)",
+      "Bash(chmod:*)",
+
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(diff:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(cut:*)",
+      "Bash(tr:*)",
+      "Bash(xargs:*)",
+      "Bash(tee:*)",
+      "Bash(stat:*)",
+      "Bash(file:*)",
+      "Bash(basename:*)",
+      "Bash(dirname:*)",
+      "Bash(realpath:*)",
+
+      "Bash(date:*)",
+      "Bash(whoami:*)",
+      "Bash(uname:*)",
+      "Bash(hostname:*)",
+
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)",
+      "Bash(git tag:*)",
+      "Bash(git remote:*)",
+      "Bash(git rev-parse:*)",
+
+      "Bash(java -version:*)",
+      "Bash(mvn -version:*)",
+      "Bash(mvn clean install:*)",
+      "Bash(mvn clean package:*)",
+      "Bash(mvn install:*)",
+      "Bash(mvn compile:*)",
+      "Bash(mvn test:*)",
+      "Bash(mvn verify:*)",
+      "Bash(mvn checkstyle:check:*)",
+      "Bash(mvn checkstyle:*)",
+      "Bash(mvn dependency:*)",
+      "Bash(mvn help:*)",
+
+      "Bash(node -v:*)",
+      "Bash(node:*)",
+      "Bash(npm -v:*)",
+      "Bash(npm install:*)",
+      "Bash(npm list:*)",
+      "Bash(npm outdated:*)",
+      "Bash(npm audit:*)",
+      "Bash(npm run:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run storybook:*)",
+      "Bash(npm run build-storybook:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npx:*)",
+
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+
+      "Bash(curl -I:*)",
+      "Bash(curl -s:*)",
+      "Bash(curl -X GET:*)",
+      "Bash(python3:*)",
+
+      "WebFetch(domain:experienceleague.adobe.com)",
+      "WebFetch(domain:developer.adobe.com)",
+      "WebFetch(domain:helpx.adobe.com)",
+      "WebFetch(domain:docs.adobe.com)",
+      "WebFetch(domain:opensource.adobe.com)",
+
+      "WebFetch(domain:sling.apache.org)",
+      "WebFetch(domain:docs.osgi.org)",
+      "WebFetch(domain:felix.apache.org)",
+      "WebFetch(domain:jackrabbit.apache.org)",
+      "WebFetch(domain:aemcomponents.dev)",
+      "WebFetch(domain:wcm.io)",
+
+      "WebFetch(domain:repo1.maven.org)",
+      "WebFetch(domain:search.maven.org)",
+      "WebFetch(domain:central.sonatype.com)",
+      "WebFetch(domain:mvnrepository.com)",
+
+      "WebFetch(domain:npmjs.com)",
+      "WebFetch(domain:angular.dev)",
+      "WebFetch(domain:react.dev)",
+      "WebFetch(domain:vuejs.org)",
+      "WebFetch(domain:storybook.js.org)",
+      "WebFetch(domain:developer.mozilla.org)",
+      "WebFetch(domain:github.com)",
+
+      "WebFetch(domain:playwright.dev)",
+      "WebFetch(domain:junit.org)",
+      "WebFetch(domain:site.mockito.org)",
+      "WebFetch(domain:www.jacoco.org)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/secrets.*)",
+      "Read(**/*secret*)",
+      "Read(**/*credentials*)",
+      "Read(**/*password*)",
+      "Read(**/.azure/**)",
+      "Read(**/.aws/**)",
+      "Read(**/id_rsa*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*.p12)",
+      "Read(**/*.pfx)",
+      "Read(**/*.jks)",
+      "Read(**/*.keystore)",
+
+      "Read(**/crypto.keys)",
+      "Read(**/hmac)",
+      "Read(**/master)",
+      "Read(**/vault/auth.properties)",
+      "Read(**/*com.day.cq.mailer*)",
+      "Read(**/*com.day.cq.dam.s7imaging*)",
+      "Read(**/*org.apache.jackrabbit.oak.security*)",
+      "Read(**/*com.adobe.granite.ldap*)",
+      "Read(**/*com.day.cq.auth.impl*)",
+      "Read(**/*com.day.cq.replication.impl.TransportHandler*)",
+      "Read(**/*cloudmanager*token*)",
+      "Read(**/*cloudmanager*key*)",
+
+      "Bash(printenv:*)",
+      "Bash(export:*)",
+      "Bash(set | grep:*)",
+      "Bash(cat **/.env:*)",
+      "Bash(cat **/secrets:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)",
+
+      "Bash(mvn -PautoInstallPackage:*)",
+      "Bash(mvn -PautoInstallBundle:*)",
+      "Bash(mvn -PautoInstallSinglePackage:*)",
+
+      "Bash(curl -X DELETE:*)",
+      "Bash(curl -X POST:*)",
+      "Bash(curl -X PUT:*)",
+
+      "Bash(curl*/crx/packmgr*)",
+      "Bash(curl*/bin/replicate*)",
+      "Bash(curl*/libs/replication*)",
+      "Bash(curl*/system/console/bundles*)",
+      "Bash(curl*/system/console/configMgr*)",
+      "Bash(curl*:operation=delete*)",
+      "Bash(curl*@Delete*)",
+      "Bash(curl*/dispatcher/invalidate.cache*)",
+      "Bash(curl*/libs/granite/security*)",
+      "Bash(curl*/etc/workflow*)",
+      "Bash(curl*treeactivation*)",
+      "Bash(curl*/bin/groovyconsole*)",
+      "Bash(curl*/oak:index*)",
+
+      "Read(**/docker-compose.yml)",
+      "Read(**/docker-compose.yaml)"
+    ]
+  },
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'When summarizing this conversation, structure the summary in these four sections as precise pointers without losing context. Categorize by importance.\n\n## What was done\n- Completed tasks and outcomes\n\n## What is going on\n- Current phase, active agent, task in progress, any blockers\n\n## What to do next\n- Remaining phases, pending tasks, next steps\n\n## Active plan and conventions\n- Plan summary, patterns being followed, key decisions made, file paths involved'"
+          }
+        ]
+      }
+    ]
+  }
+}

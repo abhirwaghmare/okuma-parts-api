@@ -1,0 +1,66 @@
+---
+description: Auto-resume bug-analysis batch sessions. At the start of every Cursor conversation, check for a pending bug-analysis checkpoint and resume automatically if AUTO_RESUME is enabled. Silent when no checkpoint exists or AUTO_RESUME is false.
+target: cursor
+alwaysApply: false
+---
+
+# Bug analysis batch — auto-resume rule
+
+This rule fires **at the start of every Cursor session**. It is the only mechanism that eliminates the need to manually invoke `@bulk-bug-fixer --resume` after a BATCH_SIZE stop.
+
+---
+
+## Trigger Conditions
+
+Run the following check **at the start of every Cursor session, before responding to the user's first message**:
+
+1. Check if auto-resume is disabled: look for a line `AUTO_RESUME: false` anywhere in this file below the frontmatter. If found → **stop. Do nothing. This rule is silent.**
+2. Scan `cursor_logs/` for files matching `bulk-*.checkpoint.json`.
+   - If no files found → **stop. Do nothing. This rule is silent.**
+3. Select the most recent checkpoint file (by `lastUpdated` field inside the JSON).
+4. Read the checkpoint and check `pendingIds`.
+   - If `pendingIds` is empty or absent → **stop. Do nothing. This rule is silent.**
+
+If all conditions pass (no disable flag, checkpoint exists, pendingIds is non-empty) → **auto-resume mode**.
+
+**Kill-switch** — to disable auto-resume permanently, add this line anywhere in this file below the frontmatter:
+```
+AUTO_RESUME: false
+```
+Delete that line to re-enable.
+
+---
+
+## Auto-Resume Behaviour
+
+Print exactly this status line (substitute real values) **before any other output**:
+
+```
+[AUTO-RESUME] Pending bug-analysis batch session found.
+  Query : <checkpoint.queryUrl>
+  Progress : <processed count>/<checkpoint.totalFetched> tickets processed, <pendingIds.length> remaining.
+  Resuming now — processing next batch of <BATCH_SIZE> tickets.
+```
+
+Then immediately execute the resume flow as defined in `@bulk-bug-fixer`:
+
+- Skip Stage 1 (ID fetching). All IDs are already in `checkpoint.allTicketIds`.
+- Process the next `BATCH_SIZE` tickets from `checkpoint.pendingIds` (in order).
+- Write/update the checkpoint after every individual ticket.
+- If `BATCH_SIZE` is reached mid-queue → stop, print batch-complete summary, write checkpoint. This rule will fire again next session.
+- If `pendingIds` becomes empty → proceed to Stage 5 (reports) as normal.
+
+---
+
+## Kill-Switch
+
+To disable auto-resume permanently, add `AUTO_RESUME: false` anywhere in this file below the frontmatter. Delete it to re-enable. There is no longer a separate project-config.md file — all configuration is inlined in the commands.
+
+---
+
+## Non-Interference Rules
+
+- This rule **never** fires if no `cursor_logs/bulk-*.checkpoint.json` exists.
+- This rule **never** prints output, asks questions, or modifies files when conditions are not met.
+- This rule does **not** affect `@fix-bug` single-ticket sessions — it reads only `bulk-*.checkpoint.json` files.
+- This rule does **not** block or delay the user's own request. If the user typed a message in the same session-open, the auto-resume runs first, then the user's request is processed.

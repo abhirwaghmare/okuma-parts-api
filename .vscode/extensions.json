@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "eamodio.gitlens",
+    "andrejunges.handlebars",
+    "syler.sass-indented",
+    "rangav.vscode-thunder-client",
+    "christian-kohler.path-intellisense",
+    "usernamehw.errorlens",
+    "formulahendry.auto-rename-tag"
+  ]
+}

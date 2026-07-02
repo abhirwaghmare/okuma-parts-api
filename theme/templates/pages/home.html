@@ -1,0 +1,796 @@
+---
+products:
+    new:
+        limit: { { theme_settings.homepage_new_products_count } }
+    featured:
+        limit: { { theme_settings.homepage_featured_products_count } }
+    top_sellers:
+        limit: { { theme_settings.homepage_top_products_count } }
+carousel: { { theme_settings.homepage_show_carousel } }
+blog:
+    recent_posts:
+        limit: { { theme_settings.homepage_blog_posts_count } }
+---
+
+{{#partial "head"}}
+<style>
+    .main-area {
+        flex: 1;
+        min-width: 0;
+        padding: 32px 32px 64px;
+        display: flex;
+        flex-direction: column;
+        gap: 32px;
+    }
+
+    .welcome {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .welcome__title {
+        font-size: 28px;
+        font-weight: 700;
+        color: #1a1a1a;
+        line-height: 1;
+    }
+    .welcome__sub {
+        font-size: 14px;
+        font-weight: 400;
+        color: #4b4b4b;
+    }
+
+    .kpi-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+    }
+    .kpi-tile {
+        min-width: 0;
+        background: #fff;
+        border: 1px solid #dedede;
+        border-radius: 4px;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+    .kpi-tile__label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #717171;
+        text-transform: uppercase;
+    }
+    .kpi-tile__num {
+        font-size: 32px;
+        font-weight: 700;
+        color: #0b308e;
+        line-height: 1;
+    }
+
+    .section {
+        display: flex;
+        flex-direction: column;
+    }
+    .section__head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .section__title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1a1a1a;
+    }
+    .section__link {
+        font-size: 13px;
+        font-weight: 700;
+        color: #005eb8;
+        text-decoration: none;
+    }
+    .section__link:hover {
+        text-decoration: underline;
+    }
+
+    .machine-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+    .machine-card {
+        min-width: 0;
+        background: #fff;
+        border: 1px solid #dedede;
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+    .machine-card__photo {
+        width: 100%;
+        height: 200px;
+        object-fit: contain;
+        display: block;
+        background: #f5f6f8;
+        padding: 12px;
+        box-sizing: border-box;
+    }
+    .machine-card__photo--placeholder {
+        background: #e8eaed;
+        height: 200px;
+    }
+    .machine-card__body {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+    .machine-card__name {
+        font-size: 16px;
+        font-weight: 700;
+        color: #1a1a1a;
+    }
+    .machine-card__serial {
+        font-family: 'Inter', sans-serif;
+        font-size: 12px;
+        font-weight: 400;
+        color: #717171;
+        margin-top: 8px;
+    }
+    .machine-card__divider {
+        height: 1px;
+        background: #dedede;
+    }
+    .machine-card__foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .machine-card__reg-label {
+        font-size: 10px;
+        font-weight: 400;
+        color: #717171;
+        text-transform: uppercase;
+    }
+    .machine-card__reg-date {
+        font-size: 12px;
+        font-weight: 400;
+        color: #000;
+        margin-top: 8px;
+    }
+
+    .btn-browse {
+        border: 1px solid #005eb8;
+        border-radius: 2px;
+        background: transparent;
+        color: #005eb8;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 8px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+            background 0.15s,
+            color 0.15s;
+    }
+    .btn-browse:hover {
+        background: #005eb8;
+        color: #fff;
+    }
+
+    .quick-links {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 16px;
+    }
+    .link-card {
+        min-width: 0;
+        background: #fff;
+        border: 1px solid #dedede;
+        border-radius: 4px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+        text-decoration: none;
+        transition:
+            border-color 0.15s,
+            box-shadow 0.15s;
+    }
+    .link-card:hover {
+        border-color: #005eb8;
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
+    }
+    .link-card svg {
+        width: 24px;
+        height: 24px;
+        color: #0b308e;
+    }
+    .link-card__label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #1a1a1a;
+        text-align: center;
+    }
+
+    .orders-wrap {
+        border: 1px solid #dedede;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 16px;
+    }
+    .orders-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .orders-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 720px;
+    }
+    .orders-table thead tr {
+        background: #f5f5f5;
+    }
+    .orders-table th {
+        font-size: 11px;
+        font-weight: 700;
+        color: #717171;
+        text-transform: uppercase;
+        text-align: left;
+        padding: 13px 16px;
+        border-bottom: 1px solid #dedede;
+        white-space: nowrap;
+    }
+    .orders-table td {
+        padding: 14px 16px;
+        border-bottom: 1px solid #dedede;
+        vertical-align: middle;
+        font-size: 13px;
+        color: #000;
+    }
+    .orders-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+    .col-order {
+        width: 160px;
+        font-weight: 700;
+    }
+    .col-date {
+        width: 140px;
+        font-weight: 400;
+    }
+    .col-items {
+        font-weight: 400;
+    }
+    .col-total {
+        width: 120px;
+        font-weight: 700;
+    }
+    .col-status {
+        width: 140px;
+    }
+    .col-view {
+        width: 80px;
+    }
+
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 2px;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .status-badge .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    .status-badge--processing {
+        background: #fff9ef;
+        border: 0.5px solid #ffb549;
+        color: #ffb549;
+    }
+    .status-badge--processing .dot {
+        background: #ffb549;
+    }
+    .status-badge--shipped {
+        background: #f0fcfd;
+        border: 0.5px solid #68d2df;
+        color: #68d2df;
+    }
+    .status-badge--shipped .dot {
+        background: #68d2df;
+    }
+    .status-badge--delivered {
+        background: #f4f9f1;
+        border: 0.5px solid #74aa50;
+        color: #74aa50;
+    }
+    .status-badge--delivered .dot {
+        background: #74aa50;
+    }
+
+    .order-view-link {
+        font-size: 12px;
+        font-weight: 700;
+        color: #005eb8;
+        text-decoration: none;
+    }
+    .order-view-link:hover {
+        text-decoration: underline;
+    }
+
+    img,
+    svg {
+        max-width: 100%;
+    }
+
+    @media (max-width: 1024px) {
+        .kpi-row {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .machine-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .quick-links {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 768px) {
+        .main-area {
+            padding: 16px;
+            gap: 24px;
+        }
+        .kpi-row {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .machine-grid {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .quick-links {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 480px) {
+        .welcome__title {
+            font-size: 24px;
+        }
+        .modal__body {
+            padding: 20px;
+            gap: 18px;
+        }
+        .book-option {
+            padding: 16px;
+            gap: 12px;
+        }
+        .book-option.is-selected {
+            padding: 15px;
+        }
+    }
+
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+    }
+    .modal-overlay.is-open {
+        display: flex;
+    }
+
+    .modal {
+        width: min(560px, 92vw);
+        max-height: 90vh;
+        overflow: auto;
+        background: #fff;
+        border-radius: 2px;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .modal__header {
+        height: 60px;
+        background: #005eb8;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px;
+    }
+    .modal__title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #fff;
+    }
+    .modal__close {
+        width: 20px;
+        height: 20px;
+        border: none;
+        background: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+    }
+
+    .modal__body {
+        padding: 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+    .modal__instruction {
+        font-size: 14px;
+        font-weight: 400;
+        color: #4b4b4b;
+    }
+    .modal__book-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .book-option {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        border: 1px solid #e5e5e5;
+        border-radius: 4px;
+        padding: 20px;
+        cursor: pointer;
+        transition: border-color 0.15s;
+    }
+    .book-option.is-selected {
+        border: 2px solid #005eb8;
+        padding: 19px;
+    }
+
+    .book-option__radio {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 1px solid #757575;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .book-option.is-selected .book-option__radio {
+        border: 1px solid #005eb8;
+    }
+    .book-option.is-selected .book-option__radio::after {
+        content: '';
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #005eb8;
+    }
+
+    .book-option__info {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+    }
+    .book-option__title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #2c2a29;
+    }
+    .book-option__line {
+        font-size: 14px;
+        font-weight: 400;
+        color: #6b7280;
+    }
+
+    .modal__divider {
+        height: 1px;
+        background: #e0e0e0;
+    }
+    .modal__actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    .modal-btn {
+        flex: 1;
+        height: 38px;
+        border-radius: 2px;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .modal-btn--cancel {
+        background: transparent;
+        border: 1px solid #005eb8;
+        color: #005eb8;
+    }
+    .modal-btn--cancel:hover {
+        background: #f0f6fc;
+    }
+    .modal-btn--proceed {
+        background: #005eb8;
+        border: none;
+        color: #fff;
+    }
+    .modal-btn--proceed:hover {
+        background: #0b308e;
+    }
+</style>
+{{/partial}} {{#partial "page"}} {{#each shipping_messages}} {{> components/common/alert/alert-info message}} {{/each}}
+
+<div class="main-area">
+    <!-- Welcome banner -->
+    <div class="welcome">
+        <h1 class="welcome__title">
+            {{#if customer}}Good day, {{customer.name}}{{else}}Welcome to Okuma Parts Portal{{/if}}
+        </h1>
+        {{#if customer.num_new_messages}}
+        <p class="welcome__sub">{{customer.num_new_messages}} new message(s) in your account.</p>
+        {{/if}}
+    </div>
+
+    <!-- KPI row — values populated via app JS -->
+    <div class="kpi-row">
+        <div class="kpi-tile">
+            <div class="kpi-tile__label">Open Orders</div>
+            <div class="kpi-tile__num" data-kpi="open-orders">—</div>
+        </div>
+        <div class="kpi-tile">
+            <div class="kpi-tile__label">Open Quotes</div>
+            <div class="kpi-tile__num" data-kpi="open-quotes">—</div>
+        </div>
+        <div class="kpi-tile">
+            <div class="kpi-tile__label">Registered Machines</div>
+            <div class="kpi-tile__num" data-kpi="registered-machines">—</div>
+        </div>
+    </div>
+
+    <!-- My Registered Machines — cards populated via app JS -->
+    <section class="section">
+        <div class="section__head">
+            <h2 class="section__title">My Registered Machines</h2>
+            <a href="/parts-book" class="section__link">View All →</a>
+        </div>
+        <div class="machine-grid" id="machine-grid">
+            <p id="machine-grid-loading" style="color:#717171;font-size:14px;">Loading machines…</p>
+        </div>
+    </section>
+
+    <!-- Quick Links -->
+    <div class="quick-links">
+        <a href="/parts-book" class="link-card">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M4 19.5A2.5 2.5 0 016.5 17H20"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
+                <path
+                    d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                />
+            </svg>
+            <span class="link-card__label">Browse Parts Book</span>
+        </a>
+
+        <a href="/cart.php" class="link-card">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M2 2h2.5l2.5 12.5a1.8 1.8 0 001.8 1.5h9a1.8 1.8 0 001.77-1.5L21 6H6"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
+                <circle cx="9.5" cy="20" r="1.5" fill="currentColor" />
+                <circle cx="18" cy="20" r="1.5" fill="currentColor" />
+            </svg>
+            <span class="link-card__label">View Cart</span>
+        </a>
+
+        <a href="/account.php?action=request_quote" class="link-card">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M5 2h9l5 5v15a0 0 0 010 0H5a1 1 0 01-1-1V3a1 1 0 011-1z"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                />
+                <path d="M14 2v5h5M8 13h8M8 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <span class="link-card__label">Request a Quote</span>
+        </a>
+
+        <a href="/account.php?action=order_status" class="link-card">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M5 2h9l5 5v15a0 0 0 010 0H5a1 1 0 01-1-1V3a1 1 0 011-1z"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                />
+                <path d="M14 2v5h5M8 13h8M8 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <span class="link-card__label">Order History</span>
+        </a>
+
+        <a href="/account.php?action=track_order" class="link-card">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M2 12h3l3-7 4 16 3-9h7"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
+            </svg>
+            <span class="link-card__label">Track an Order</span>
+        </a>
+    </div>
+
+    <!-- Recent Orders — rows populated via app JS -->
+    <section class="section">
+        <div class="section__head">
+            <h2 class="section__title">Recent Orders</h2>
+            <a href="/account.php?action=order_status" class="section__link">View All Orders →</a>
+        </div>
+        <div class="orders-wrap">
+            <div class="orders-scroll">
+                <table class="orders-table">
+                    <thead>
+                        <tr>
+                            <th class="col-order">Order #</th>
+                            <th class="col-date">Date</th>
+                            <th class="col-items">Items</th>
+                            <th class="col-total">Total</th>
+                            <th class="col-status">Status</th>
+                            <th class="col-view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="col-order">OKU-2026-00418</td>
+                            <td class="col-date">Feb 22, 2026</td>
+                            <td class="col-items">Spindle Bearing (2), Coolant Pump</td>
+                            <td class="col-total">$842.25</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--processing"
+                                    ><span class="dot"></span>Processing</span
+                                >
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                        <tr>
+                            <td class="col-order">OKU-2026-00392</td>
+                            <td class="col-date">Feb 18, 2026</td>
+                            <td class="col-items">Drive Belt (5), Tool Changer Cam</td>
+                            <td class="col-total">$1,204.00</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--shipped"><span class="dot"></span>Shipped</span>
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                        <tr>
+                            <td class="col-order">OKU-2026-00355</td>
+                            <td class="col-date">Feb 10, 2026</td>
+                            <td class="col-items">Hydraulic Filter Kit</td>
+                            <td class="col-total">$412.00</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--delivered"
+                                    ><span class="dot"></span>Delivered</span
+                                >
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                        <tr>
+                            <td class="col-order">OKU-2026-00310</td>
+                            <td class="col-date">Feb 02, 2026</td>
+                            <td class="col-items">Proximity Sensor, Limit Switch</td>
+                            <td class="col-total">$124.50</td>
+                            <td class="col-status">
+                                <span class="status-badge status-badge--delivered"
+                                    ><span class="dot"></span>Delivered</span
+                                >
+                            </td>
+                            <td class="col-view"><a href="#" class="order-view-link">View</a></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+(function () {
+    var API_URL = '{{theme_settings.parts_book_api_url}}' || (window.location.port === '3000' ? 'http://' + window.location.hostname + ':3001' : '');
+    var customerId = {{#if customer}}{{customer.id}}{{else}}0{{/if}};
+
+    function formatDate(iso) {
+        if (!iso) return 'Pending Install';
+        var d = new Date(iso);
+        return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+
+    function buildCard(machine) {
+        var imgHtml = machine.imageUrl
+            ? '<img class="machine-card__photo" src="' + machine.imageUrl + '" alt="' + machine.model + '" loading="lazy" />'
+            : '<div class="machine-card__photo machine-card__photo--placeholder"></div>';
+
+        var partsBookHref = machine.pubNo
+            ? '/parts-book?machine=' + encodeURIComponent(machine.pubNo)
+            : '/parts-book';
+
+        var serialHtml = machine.serial
+            ? '<div class="machine-card__serial">Serial: ' + machine.serial + '</div>'
+            : '';
+
+        var regHtml = machine.installDate
+            ? '<div>'
+            +   '<div class="machine-card__reg-label">REGISTERED</div>'
+            +   '<div class="machine-card__reg-date">' + formatDate(machine.installDate) + '</div>'
+            + '</div>'
+            : '';
+
+        return '<div class="machine-card">'
+            + imgHtml
+            + '<div class="machine-card__body">'
+            +   '<div>'
+            +     '<div class="machine-card__name">' + (machine.model || machine.name || '') + '</div>'
+            +     serialHtml
+            +   '</div>'
+            +   '<div class="machine-card__divider"></div>'
+            +   '<div class="machine-card__foot">'
+            +     regHtml
+            +     '<a href="' + partsBookHref + '" class="btn-browse">Browse Parts Book</a>'
+            +   '</div>'
+            + '</div>'
+            + '</div>';
+    }
+
+    var endpoint = customerId
+        ? API_URL + '/api/customer/' + customerId + '/machines'
+        : API_URL + '/api/machines';
+
+    fetch(endpoint)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            var machines = data.machines || [];
+            var grid = document.getElementById('machine-grid');
+            grid.innerHTML = machines.length
+                ? machines.map(buildCard).join('')
+                : '<p style="color:#666;font-size:14px;">No registered machines found.</p>';
+            var kpi = document.querySelector('[data-kpi="registered-machines"]');
+            if (kpi) kpi.textContent = machines.length;
+        })
+        .catch(function () {
+            var grid = document.getElementById('machine-grid');
+            grid.innerHTML = '<p style="color:#c00;font-size:14px;">Could not load machines.</p>';
+        });
+}());
+</script>
+
+{{/partial}} {{> layout/base}}
