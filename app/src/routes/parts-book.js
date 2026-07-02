@@ -149,6 +149,40 @@ router.get('/api/parts-book/toc', async (req, res) => {
 });
 
 /**
+ * GET /api/parts-book/machines/:pdfId/assemblies
+ *
+ * Returns all assembly groups for a given machine (pdfId), each with its
+ * slug, label, overview image URL, and the list of sheets it contains.
+ */
+router.get('/api/parts-book/machines/:pdfId/assemblies', async (req, res) => {
+    const { pdfId } = req.params;
+
+    const toc = await fetchDataJson('toc.json');
+    if (!toc) {
+        return res.status(500).json({ error: 'Table of contents not available.' });
+    }
+
+    const doc = (toc.documents || []).find(d => d.id === pdfId);
+    if (!doc) {
+        return res.status(404).json({ error: `Machine '${pdfId}' not found.` });
+    }
+
+    const cdnBase = config.partsBook.cdnBaseUrl;
+
+    const assemblies = (doc.assemblies || []).map(assembly => ({
+        slug: assembly.slug,
+        label: assembly.label,
+        overviewImage: assembly.overview_image ? `${cdnBase}/${assembly.overview_image}` : null,
+        sheets: (assembly.sheets || []).map(sheet => ({
+            slug: sheet.slug,
+            label: sheet.label,
+        })),
+    }));
+
+    return res.json({ pdfId, assemblies });
+});
+
+/**
  * GET /api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts
  *
  * Returns all parts for a given sheet, enriched with BC price/inventory data
