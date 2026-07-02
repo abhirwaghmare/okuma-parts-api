@@ -1,5 +1,16 @@
 [
   {
+    "name": "Okuma",
+    "settings": [
+      {
+        "type": "text",
+        "label": "Parts Book API URL",
+        "id": "parts_book_api_url",
+        "force_reload": false
+      }
+    ]
+  },
+  {
     "name": "i18n.Global",
     "settings": [
       {

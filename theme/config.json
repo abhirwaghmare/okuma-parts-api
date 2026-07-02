@@ -44,6 +44,7 @@
     "Firefox ESR"
   ],
   "settings": {
+    "parts_book_api_url": "",
     "hide_breadcrumbs": false,
     "hide_page_heading": false,
     "hide_category_page_heading": false,

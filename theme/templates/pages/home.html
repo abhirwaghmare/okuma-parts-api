@@ -726,7 +726,7 @@ blog:
 
 <script>
 (function () {
-    var API_URL = window.location.port === '3000' ? 'http://' + window.location.hostname + ':3001' : '';
+    var API_URL = '{{theme_settings.parts_book_api_url}}' || (window.location.port === '3000' ? 'http://' + window.location.hostname + ':3001' : '');
     var customerId = {{#if customer}}{{customer.id}}{{else}}0{{/if}};
 
     function formatDate(iso) {
