@@ -273,11 +273,11 @@ const PARENT_LABELS = {
 
 const PUB_NO_RE = /Pub\s+No\.\s*([A-Z]{2}\d{2}-\d{3}-[A-Z0-9]+)/i;
 
-function parsePubNo(description) {
-    if (!description) return null;
+function parsePubNos(description) {
+    if (!description) return [];
     const plain = description.replace(/<[^>]+>/g, ' ');
-    const m = plain.match(PUB_NO_RE);
-    return m ? m[1] : null;
+    const matches = [...plain.matchAll(new RegExp(PUB_NO_RE.source, 'gi'))];
+    return matches.map(m => m[1]);
 }
 
 /**
@@ -302,7 +302,7 @@ router.get('/api/machines', async (req, res) => {
             name: cat.name,
             machineType: PARENT_LABELS[cat.parent_id] || null,
             imageUrl: cat.image_url || '',
-            pubNo: parsePubNo(cat.description),
+            pubNos: parsePubNos(cat.description),
         }));
 
         return res.json({ machines });
@@ -332,7 +332,7 @@ async function fetchMachineCategories() {
         name: cat.name,
         machineType: PARENT_LABELS[cat.parent_id] || null,
         imageUrl: cat.image_url || '',
-        pubNo: parsePubNo(cat.description),
+        pubNos: parsePubNos(cat.description),
         _normalised: cat.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
     }));
 }
@@ -408,7 +408,7 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
                     installDate: m.install_date || null,
                     status: m.status || null,
                     imageUrl: cat ? cat.imageUrl : '',
-                    pubNo: cat ? cat.pubNo : null,
+                    pubNos: cat ? cat.pubNos : [],
                     machineType: cat ? cat.machineType : null,
                     categoryId: cat ? cat.categoryId : null,
                 };
