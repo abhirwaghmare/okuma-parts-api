@@ -159,6 +159,7 @@ router.get('/api/parts-book/machines/:pdfId/assemblies', async (req, res) => {
 
     const toc = await fetchDataJson('toc.json');
     if (!toc) {
+        console.error('parts-book: toc.json not found');
         return res.status(500).json({ error: 'Table of contents not available.' });
     }
 
