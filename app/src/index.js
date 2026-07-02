@@ -7,6 +7,7 @@ const session = require('express-session');
 const config = require('./config');
 const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
+const { NotFoundError } = require('./middleware/errors');
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use(
 );
 
 app.use(routes);
+app.use((req, res, next) => next(new NotFoundError(`Cannot ${req.method} ${req.path}`)));
 app.use(errorHandler);
 
 app.listen(config.port, () => {
