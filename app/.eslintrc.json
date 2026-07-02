@@ -6,6 +6,7 @@
   },
   "rules": {
     "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
-    "no-param-reassign": ["error", { "props": false }]
+    "no-param-reassign": ["error", { "props": false }],
+    "linebreak-style": 0
   }
 }
