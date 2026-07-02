@@ -12,10 +12,7 @@ router.use(bodyParser({ type: 'application/json' }));
 
 function verifySignature(rawBody, hash) {
     if (!config.bc.clientSecret || !hash) return false;
-    const computed = crypto
-        .createHmac('sha256', config.bc.clientSecret)
-        .update(rawBody)
-        .digest('base64');
+    const computed = crypto.createHmac('sha256', config.bc.clientSecret).update(rawBody).digest('base64');
     try {
         return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(hash));
     } catch {
@@ -39,6 +36,11 @@ function parseAndVerify(req, res, next) {
     next();
 }
 
+async function handleOrderWebhook(payload) {
+    // TODO: implement order status update logic
+    console.info('Order webhook received:', JSON.stringify(payload.data));
+}
+
 router.post('/order', parseAndVerify, (req, res) => {
     // Acknowledge within 5s — heavy processing runs asynchronously
     res.status(200).json({ received: true });
@@ -46,10 +48,5 @@ router.post('/order', parseAndVerify, (req, res) => {
         console.error('Order webhook processing error:', err);
     });
 });
-
-async function handleOrderWebhook(payload) {
-    // TODO: implement order status update logic
-    console.info('Order webhook received:', JSON.stringify(payload.data));
-}
 
 module.exports = router;

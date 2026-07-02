@@ -80,8 +80,8 @@ function boxToPercent(box) {
         return null;
     }
     const [ymin, xmin, ymax, xmax] = box;
-    const cx = parseFloat((((xmin + xmax) / 2) / 10).toFixed(2));
-    const cy = parseFloat((((ymin + ymax) / 2) / 10).toFixed(2));
+    const cx = parseFloat(((xmin + xmax) / 2 / 10).toFixed(2));
+    const cy = parseFloat(((ymin + ymax) / 2 / 10).toFixed(2));
     return { calloutX: cx, calloutY: cy };
 }
 
@@ -134,15 +134,13 @@ router.get('/api/parts-book/toc', async (req, res) => {
 
     const rewritten = rewriteTocImagePaths(toc);
 
-    const categoryIds = rewritten.documents
-        .map(d => d.category_id)
-        .filter(id => typeof id === 'number');
+    const categoryIds = rewritten.documents.map(d => d.category_id).filter(id => typeof id === 'number');
 
     const categoryImages = await fetchCategoryImages([...new Set(categoryIds)]);
 
     const documents = rewritten.documents.map(doc => ({
         ...doc,
-        category_image: doc.category_id ? (categoryImages[doc.category_id] || '') : '',
+        category_image: doc.category_id ? categoryImages[doc.category_id] || '' : '',
     }));
 
     return res.json({ ...rewritten, documents });
@@ -191,9 +189,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
     const rawParts = partsData.parts || [];
 
     // -- Batch-fetch BC product data for matched parts ----------------------
-    const matchedSkus = [
-        ...new Set(rawParts.filter(p => p.has_table_match && p.part_no).map(p => p.part_no)),
-    ];
+    const matchedSkus = [...new Set(rawParts.filter(p => p.has_table_match && p.part_no).map(p => p.part_no))];
 
     /** @type {Object.<string, { productId: number|null, price: number|null, inStock: boolean }>} */
     const bcLookup = {};
@@ -212,8 +208,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
 
             bcProducts.forEach(product => {
                 const notTracked = product.inventory_tracking === 'none';
-                const inStock =
-                    product.availability === 'available' && (notTracked || product.inventory_level > 0);
+                const inStock = product.availability === 'available' && (notTracked || product.inventory_level > 0);
 
                 bcLookup[product.sku] = {
                     productId: product.id,

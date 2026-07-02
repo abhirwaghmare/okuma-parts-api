@@ -15,10 +15,12 @@ const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
     : ['http://localhost:3000', 'http://localhost:3001'];
 
-app.use(cors({
-    origin: corsOrigins,
-    credentials: true,
-}));
+app.use(
+    cors({
+        origin: corsOrigins,
+        credentials: true,
+    })
+);
 app.use(express.json());
 
 app.use(

@@ -1,11 +1,18 @@
 {
-  "extends": ["airbnb-base"],
+  "extends": ["airbnb-base", "prettier"],
   "env": {
     "node": true,
-    "es6": true
+    "es2020": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2020
   },
   "rules": {
     "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
-    "no-param-reassign": ["error", { "props": false }]
+    "no-param-reassign": ["error", { "props": false }],
+    "linebreak-style": "off",
+    "strict": "off",
+    "consistent-return": "off",
+    "no-underscore-dangle": "off"
   }
 }
