@@ -4,6 +4,7 @@ const axios = require('axios');
 const { Router } = require('express');
 const config = require('../config');
 const bcClient = require('../services/bigcommerce');
+const logger = require('../config/logger');
 
 const router = Router();
 
@@ -28,7 +29,7 @@ async function fetchDataJson(relativePath) {
         if (err.response && err.response.status === 404) {
             return null;
         }
-        console.error(`parts-book: failed to fetch ${url}:`, err.message);
+        logger.error(`parts-book: failed to fetch ${url}`, { message: err.message });
         return null;
     }
 }
@@ -112,7 +113,7 @@ async function fetchCategoryImages(categoryIds) {
         });
         return result;
     } catch (err) {
-        console.error('parts-book: category image lookup failed:', err.message);
+        logger.error('parts-book: category image lookup failed', { message: err.message });
         return {};
     }
 }
@@ -128,7 +129,7 @@ router.get('/api/parts-book/toc', async (req, res) => {
     const toc = await fetchDataJson('toc.json');
 
     if (!toc) {
-        console.error('parts-book: toc.json not found at', config.partsBook.cdnBaseUrl);
+        logger.error('parts-book: toc.json not found', { cdnBase: config.partsBook.cdnBaseUrl });
         return res.status(500).json({ error: 'Table of contents not available.' });
     }
 
@@ -161,7 +162,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
     const toc = await fetchDataJson('toc.json');
 
     if (!toc) {
-        console.error('parts-book: toc.json not found');
+        logger.error('parts-book: toc.json not found');
         return res.status(500).json({ error: 'Table of contents not available.' });
     }
 
@@ -184,7 +185,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
     const partsData = await fetchDataJson(sheet.parts_json);
 
     if (!partsData) {
-        console.error(`parts-book: parts.json not found at ${sheet.parts_json}`);
+        logger.error('parts-book: parts.json not found', { path: sheet.parts_json });
         return res.status(500).json({ error: 'Parts data not available for this sheet.' });
     }
 
@@ -222,7 +223,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
                 };
             });
         } catch (err) {
-            console.error('parts-book: BC product lookup failed:', err.message);
+            logger.error('parts-book: BC product lookup failed', { message: err.message });
         }
     }
 
@@ -307,7 +308,7 @@ router.get('/api/machines', async (req, res) => {
 
         return res.json({ machines });
     } catch (err) {
-        console.error('machines: BC category fetch failed:', err.message);
+        logger.error('machines: BC category fetch failed', { message: err.message });
         return res.status(500).json({ error: 'Could not load machine list.' });
     }
 });
@@ -390,7 +391,7 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
         try {
             rawMachines = JSON.parse(rmField.value);
         } catch {
-            console.error(`customer ${customerId}: registered_machines metafield is not valid JSON`);
+            logger.error('customer registered_machines metafield is not valid JSON', { customerId });
             return res.json({ machines: [] });
         }
 
@@ -416,7 +417,7 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
 
         return res.json({ machines });
     } catch (err) {
-        console.error(`customer ${customerId}: machine lookup failed:`, err.message);
+        logger.error('customer machine lookup failed', { customerId, message: err.message });
         return res.status(500).json({ error: 'Could not load customer machines.' });
     }
 });

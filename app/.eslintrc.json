@@ -6,6 +6,10 @@
   },
   "rules": {
     "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
-    "no-param-reassign": ["error", { "props": false }]
+    "no-param-reassign": ["error", { "props": false }],
+    "strict": "off",
+    "indent": ["error", 4, { "SwitchCase": 1 }],
+    "arrow-parens": ["error", "as-needed"],
+    "import/no-extraneous-dependencies": ["error", { "packageDir": ["./", "./app"] }]
   }
 }

@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const axios = require('axios');
 const config = require('../config');
+const logger = require('../config/logger');
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.get('/callback', async (req, res, next) => {
         });
 
         // TODO: persist data.access_token and data.context (store_hash) to your data store
-        console.info('OAuth install complete for store:', data.context);
+        logger.info('OAuth install complete for store:', data.context);
         res.json({ installed: true, context: data.context });
     } catch (err) {
         next(err);

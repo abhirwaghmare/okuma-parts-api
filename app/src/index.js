@@ -5,12 +5,13 @@ const morgan = require('morgan');
 const cors = require('cors');
 const session = require('express-session');
 const config = require('./config');
+const logger = require('./config/logger');
 const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
-app.use(morgan('dev'));
+app.use(morgan('combined', { stream: logger.stream }));
 const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
     : ['http://localhost:3000', 'http://localhost:3001'];
@@ -34,7 +35,7 @@ app.use(routes);
 app.use(errorHandler);
 
 app.listen(config.port, () => {
-    console.info(`Okuma BC app running on port ${config.port}`);
+    logger.info(`Okuma BC app running on port ${config.port}`);
 });
 
 module.exports = app;

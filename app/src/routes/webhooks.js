@@ -4,6 +4,7 @@ const { Router } = require('express');
 const bodyParser = require('express').raw;
 const crypto = require('crypto');
 const config = require('../config');
+const logger = require('../config/logger');
 
 const router = Router();
 
@@ -43,13 +44,13 @@ router.post('/order', parseAndVerify, (req, res) => {
     // Acknowledge within 5s — heavy processing runs asynchronously
     res.status(200).json({ received: true });
     handleOrderWebhook(req.webhookPayload).catch(err => {
-        console.error('Order webhook processing error:', err);
+        logger.error('Order webhook processing error:', { message: err.message, stack: err.stack });
     });
 });
 
 async function handleOrderWebhook(payload) {
     // TODO: implement order status update logic
-    console.info('Order webhook received:', JSON.stringify(payload.data));
+    logger.info('Order webhook received', { data: payload.data });
 }
 
 module.exports = router;
