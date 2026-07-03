@@ -1,14 +1,13 @@
-'use strict';
-
-const { Router } = require('express');
-const bcClient = require('../services/bigcommerce');
+import { Router } from 'express';
+import { AxiosError } from 'axios';
+import bcClient from '../services/bigcommerce';
 
 const router = Router();
 
 router.get('/', async (req, res, next) => {
     try {
         const { page = 1, limit = 50, keyword } = req.query;
-        const params = { page, limit };
+        const params: Record<string, unknown> = { page, limit };
         if (keyword) params.keyword = keyword;
 
         const { data } = await bcClient.get('/v3/catalog/products', { params });
@@ -23,11 +22,12 @@ router.get('/:id', async (req, res, next) => {
         const { data } = await bcClient.get(`/v3/catalog/products/${req.params.id}`);
         res.json(data);
     } catch (err) {
-        if (err.response?.status === 404) {
-            return res.status(404).json({ error: 'Product not found' });
+        if ((err as AxiosError).response?.status === 404) {
+            res.status(404).json({ error: 'Product not found' });
+            return;
         }
         next(err);
     }
 });
 
-module.exports = router;
+export default router;

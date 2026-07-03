@@ -1,21 +1,19 @@
-'use strict';
-
-const { Router } = require('express');
-const axios = require('axios');
-const config = require('../config');
+import { Router } from 'express';
+import axios from 'axios';
+import config from '../config';
 
 const router = Router();
 
-// BC OAuth 2.0 callback — exchange code for permanent access token
 router.get('/callback', async (req, res, next) => {
     const { code, scope, context } = req.query;
 
     if (!code || !context) {
-        return res.status(400).json({ error: 'Missing required OAuth parameters' });
+        res.status(400).json({ error: 'Missing required OAuth parameters' });
+        return;
     }
 
     try {
-        const { data } = await axios.post('https://login.bigcommerce.com/oauth2/token', {
+        const { data } = await axios.post<{ context: string }>('https://login.bigcommerce.com/oauth2/token', {
             client_id: config.bc.clientId,
             client_secret: config.bc.clientSecret,
             code,
@@ -33,4 +31,4 @@ router.get('/callback', async (req, res, next) => {
     }
 });
 
-module.exports = router;
+export default router;
