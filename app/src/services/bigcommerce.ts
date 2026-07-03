@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import config from '../config';
+import logger from '../config/logger';
 
 const bcClient = axios.create({
     baseURL: config.bc.apiBaseUrl,
@@ -16,7 +17,7 @@ bcClient.interceptors.response.use(
     (err: AxiosError<{ title?: string }>) => {
         const status = err.response?.status;
         const message = err.response?.data?.title ?? err.message;
-        console.error(`BC API error [${status}]: ${message}`);
+        logger.error(`BC API error [${status}]: ${message}`);
         return Promise.reject(err);
     }
 );
