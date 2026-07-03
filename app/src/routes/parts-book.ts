@@ -125,8 +125,8 @@ function boxToPercent(box: number[]): { calloutX: number; calloutY: number } | n
         return null;
     }
     const [ymin, xmin, ymax, xmax] = box;
-    const cx = parseFloat((((xmin + xmax) / 2) / 10).toFixed(2));
-    const cy = parseFloat((((ymin + ymax) / 2) / 10).toFixed(2));
+    const cx = parseFloat(((xmin + xmax) / 2 / 10).toFixed(2));
+    const cy = parseFloat(((ymin + ymax) / 2 / 10).toFixed(2));
     return { calloutX: cx, calloutY: cy };
 }
 
@@ -233,8 +233,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
 
             bcProducts.forEach(product => {
                 const notTracked = product.inventory_tracking === 'none';
-                const inStock =
-                    product.availability === 'available' && (notTracked || product.inventory_level > 0);
+                const inStock = product.availability === 'available' && (notTracked || product.inventory_level > 0);
 
                 bcLookup[product.sku] = {
                     productId: product.id,

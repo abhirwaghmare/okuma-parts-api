@@ -8,7 +8,9 @@ interface WebhookPayload {
 }
 
 declare global {
+    // eslint-disable-next-line @typescript-eslint/no-namespace
     namespace Express {
+        // eslint-disable-next-line no-shadow
         interface Request {
             webhookPayload?: WebhookPayload;
         }
@@ -22,10 +24,7 @@ router.use(express.raw({ type: 'application/json' }));
 
 function verifySignature(rawBody: Buffer, hash: string | undefined): boolean {
     if (!config.bc.clientSecret || !hash) return false;
-    const computed = crypto
-        .createHmac('sha256', config.bc.clientSecret)
-        .update(rawBody)
-        .digest('base64');
+    const computed = crypto.createHmac('sha256', config.bc.clientSecret).update(rawBody).digest('base64');
     try {
         return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(hash));
     } catch {
