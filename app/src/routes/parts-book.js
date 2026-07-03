@@ -119,10 +119,12 @@ async function fetchCategoryImages(categoryIds) {
 
 /**
  * GET /api/parts-book/toc
+ * GET /api/parts-book/toc?id=<pdfId>
  *
- * Returns the master table of contents with all image paths rewritten to
- * BC CDN URLs. When a document has a category_id, its category_image field
- * is populated from the BC category image.
+ * Without ?id  — returns the full table of contents enriched with BC CDN image
+ *               paths and category images.
+ * With    ?id  — returns a single document entry matching that pdfId.
+ *               Responds 404 when the id is not found.
  */
 router.get('/api/parts-book/toc', async (req, res) => {
     const toc = await fetchDataJson('toc.json');
@@ -134,16 +136,31 @@ router.get('/api/parts-book/toc', async (req, res) => {
 
     const rewritten = rewriteTocImagePaths(toc);
 
-    const categoryIds = rewritten.documents
+    // When ?id is provided, scope to that single document only
+    const { id } = req.query;
+    const sourceDocuments = id
+        ? rewritten.documents.filter(d => d.id === id)
+        : rewritten.documents;
+
+    if (id && sourceDocuments.length === 0) {
+        return res.status(404).json({ error: `Document '${id}' not found.` });
+    }
+
+    const categoryIds = sourceDocuments
         .map(d => d.category_id)
-        .filter(id => typeof id === 'number');
+        .filter(cid => typeof cid === 'number');
 
     const categoryImages = await fetchCategoryImages([...new Set(categoryIds)]);
 
-    const documents = rewritten.documents.map(doc => ({
+    const documents = sourceDocuments.map(doc => ({
         ...doc,
         category_image: doc.category_id ? (categoryImages[doc.category_id] || '') : '',
     }));
+
+    // When a single document was requested return it unwrapped for convenience
+    if (id) {
+        return res.json(documents[0]);
+    }
 
     return res.json({ ...rewritten, documents });
 });
