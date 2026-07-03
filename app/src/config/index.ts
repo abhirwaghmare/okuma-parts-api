@@ -1,9 +1,27 @@
-'use strict';
+import dotenv from 'dotenv';
 
-require('dotenv').config();
+dotenv.config();
 
-const config = {
-    port: parseInt(process.env.PORT, 10) || 3001,
+interface BcConfig {
+    clientId: string | undefined;
+    clientSecret: string | undefined;
+    accessToken: string | undefined;
+    storeHash: string | undefined;
+    appCallbackUrl: string | undefined;
+    apiBaseUrl: string;
+}
+
+interface AppConfig {
+    port: number;
+    sessionSecret: string | undefined;
+    bc: BcConfig;
+    partsBook: {
+        cdnBaseUrl: string | undefined;
+    };
+}
+
+const config: AppConfig = {
+    port: parseInt(process.env.PORT ?? '3001', 10),
     sessionSecret: process.env.SESSION_SECRET,
     bc: {
         clientId: process.env.BC_CLIENT_ID,
@@ -24,4 +42,4 @@ if (missing.length) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
 }
 
-module.exports = config;
+export default config;
