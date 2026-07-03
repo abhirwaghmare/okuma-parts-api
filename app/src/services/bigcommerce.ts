@@ -1,8 +1,6 @@
-'use strict';
-
-const axios = require('axios');
-const config = require('../config');
-const logger = require('../config/logger');
+import axios, { AxiosError } from 'axios';
+import config from '../config';
+import logger from '../config/logger';
 
 const bcClient = axios.create({
     baseURL: config.bc.apiBaseUrl,
@@ -16,12 +14,12 @@ const bcClient = axios.create({
 
 bcClient.interceptors.response.use(
     res => res,
-    err => {
+    (err: AxiosError<{ title?: string }>) => {
         const status = err.response?.status;
-        const message = err.response?.data?.title || err.message;
+        const message = err.response?.data?.title ?? err.message;
         logger.error(`BC API error [${status}]: ${message}`);
         return Promise.reject(err);
     }
 );
 
-module.exports = bcClient;
+export default bcClient;
