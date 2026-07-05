@@ -1,9 +1,13 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 <project_context>
 - Project name: Okuma BC
 - Business unit: Deloitte US Consulting
 - BigCommerce store hash: tb0nfpch8c
 - Channel ID(s): [FILL IN — check store admin → Channel Manager]
-- B2B Edition enabled: n (using BundleB2B/B3 auto-loader instead — configured in theme/assets/js/theme/global.js)
+- B2B Edition enabled: n (using BundleB2B/B3 auto-loader instead — configured in the Stencil theme, which lives in a separate repository)
 - Makeswift enabled: n (Stencil theme, not Catalyst)
 - Production storefront origin: [FILL IN — e.g. https://okuma.mybigcommerce.com or custom domain]
 - Target environments: [FILL IN — preview / staging / prod]
@@ -14,33 +18,91 @@
 </project_context>
 
 <codebase_stack>
-- Storefront: BigCommerce Stencil — Cornerstone 6.11.0 base (Apex fork), not Catalyst/Next.js
-- Theme engine: Handlebars v4 (templates in theme/templates/; layout in theme/templates/layout/base.html)
-- Styling: SCSS (theme/assets/scss/) — Foundation 5 + Citadel (BC design tokens) + custom BEM-like components; autoprefixer enabled (> 1%, last 2 versions, Firefox ESR)
-- JS: ES6 transpiled to ES5 via Babel (@babel/preset-env + corejs 3); Webpack 5 bundler; jQuery v3.6.1 globally injected via ProvidePlugin; PageManager class pattern for all page-level logic (extend PageManager, override onReady())
-- Build tool: Webpack 5 (webpack.common.js / webpack.dev.js / webpack.prod.js) + Grunt (eslint + svgstore tasks)
-  - JS entry: theme/assets/js/app.js → bundles: theme-bundle.main.js, theme-bundle.head_async.js, theme-bundle.font.js, theme-bundle.polyfills.js
-  - JS output: theme/assets/dist/
-- Package manager: npm (theme/package.json) — NOT pnpm; no monorepo/workspace tooling
-- Node version: >= 18.x (currently v20.16.0)
-- npm version: >= 9.x
-- Stencil CLI: @bigcommerce/stencil-cli v9.0.2 (global install)
-- Testing: Jest 27 (test files: theme/assets/js/test-unit/**/*.spec.js; run: cd theme && npm test)
-- Linting: ESLint with Airbnb + Prettier extends; babel-eslint parser (cd theme && npm run lint)
-- CSS linting: stylelint with stylelint-config-sass-guidelines + stylelint-scss (cd theme && npm run stylelint)
-- Code format: Prettier — singleQuote: true, trailingComma: es5, printWidth: 120, tabWidth: 4, semi: true, arrowParens: avoid
-- B2B: BundleB2B (B3) auto-loader — script injected + window.b3themeConfig configured in theme/assets/js/theme/global.js
-- Backend: Node.js/Express app expected in app/ — NOT PRESENT in this repo (may be a separate repository)
-- REST Management API scopes used: Products (v3/catalog), Orders, Webhooks (v3/hooks)
-- Build command: cd theme && npm run build (webpack.prod.js → assets/dist/)
-- Dev command: cd theme && stencil start (proxies to BC store, localhost:3000)
-- Test command: cd theme && npm test
-- Lint command: cd theme && npm run lint && npm run stylelint
-- Format command: cd theme && npm run format
-- Deploy: cd theme && stencil bundle → upload .zip to BC store admin (Storefront → Themes → Upload) or via Themes API
-- CI/CD: None configured — deployment is manual
-- Tunnelling for webhooks/local callbacks: ngrok (ngrok http 3000)
-- Observability: Not configured
+## Repository layout
+
+This repository contains only the **Node.js/Express backend** (`app/`). The BigCommerce Stencil theme lives in a separate repository.
+
+```
+Okuma-BC/
+├── app/        # Node.js/Express TypeScript backend — Parts Book API + BC REST integrations
+├── docs/       # Technical design documents
+├── scripts/    # One-off seeding and upload utilities (JS, not part of the app build)
+└── coverage/   # Jest coverage output (gitignored)
+```
+
+## Backend (app/)
+
+- Runtime: Node.js >= 18.x (currently v20.16.0), npm >= 9.x
+- Language: TypeScript 6, compiled to CommonJS (`dist/`) via `tsc`; dev mode via `tsx watch`
+- Framework: Express 4
+- Port: **3000** by default (override with `PORT` env var; auto-binds to next available port if 3000 is in use)
+- Logger: Winston — `app/src/config/logger.ts`; use `logger` from this module, never bare `console.log` in production paths
+- BC API client: axios instance at `app/src/services/bigcommerce.ts` — pre-configured with `X-Auth-Token` and store base URL; use this for all BC REST calls
+- Session: express-session with `httpOnly` + `sameSite: lax`; `secure` flag on in production
+- CORS: controlled by `CORS_ORIGINS` env var (comma-separated); defaults to localhost:3000 and localhost:3001
+- Validation: custom `validate()` middleware at `app/src/middleware/validate.ts` — pass a schema with `query/params/body` field rules; throws `ValidationError` which `errorHandler` maps to 400
+- Error hierarchy: `AppError → ValidationError / NotFoundError` in `app/src/middleware/errors.ts`; `errorHandler` middleware at `app/src/middleware/errorHandler.ts` maps status, hides 5xx details
+
+### Backend commands
+
+```bash
+cd app && npm install          # first-time setup
+cd app && npm run dev          # tsx watch — live reload, no compile step
+cd app && npm run build        # tsc → dist/
+cd app && npm start            # node dist/index.js (production)
+cd app && npm run lint         # eslint src/**/*.ts
+cd app && npm run lint:fix     # eslint --fix
+cd app && npm run format       # prettier --write
+cd app && npm run format:check # prettier --check
+```
+
+No test runner is wired up yet (`tests/` directory is present but empty).
+
+### Environment variables (app/.env)
+
+Required: `BC_ACCESS_TOKEN`, `BC_STORE_HASH`, `SESSION_SECRET`, `PARTS_BOOK_CDN_BASE_URL`
+Optional: `BC_CLIENT_ID`, `BC_CLIENT_SECRET`, `BC_APP_CALLBACK_URL`, `PORT`, `CORS_ORIGINS`, `BC_WEBDAV_USER`, `BC_WEBDAV_PASS`
+
+Config is loaded and validated at startup in `app/src/config/index.ts` — the app throws on missing required vars.
+
+### Route structure
+
+| Mount | File | Purpose |
+|---|---|---|
+| `/health` | `routes/health.ts` | Liveness check |
+| `/api/products` | `routes/products.ts` | BC catalog proxy (list + get by id) |
+| `/auth/callback` | `routes/auth.ts` | OAuth install callback (token exchange stub) |
+| `/webhooks/order` | `routes/webhooks.ts` | BC order webhook — HMAC-SHA256 verified, async handler |
+| `/api/parts-book/*` | `routes/parts-book.ts` | Parts Book TOC, sheet parts with BC SKU enrichment, machine list, customer machines |
+
+### Parts Book data model
+
+Assets live on BC WebDAV CDN (`PARTS_BOOK_CDN_BASE_URL`). Entry point is `toc.json` — array of documents each with assemblies and sheets. Sheet detail fetches `parts.json` from CDN, then enriches matching SKUs via `bcClient.get('/v3/catalog/products', { params: { 'sku:in': ... } })`. Machine model → BC category matching is done in-memory via fuzzy normalised-name lookup in `fetchMachineCategories()` / `matchCategory()`. Customer machines are stored as JSON in a BC customer metafield: `namespace=okuma, key=registered_machines`.
+
+### Webhook pattern
+
+`routes/webhooks.ts` uses `express.raw()` before JSON parse so the raw body is available for HMAC verification. New webhook routes must follow the same pattern: parse raw → verify signature → ack 200 immediately → run handler async.
+
+## Stencil theme (separate repo)
+
+- Cornerstone 6.11.0 base (Apex fork)
+- Handlebars v4, SCSS (Foundation 5 + Citadel), Webpack 5, jQuery 3.6.1
+- B2B: BundleB2B (B3) auto-loader configured in `theme/assets/js/theme/global.js`
+- Deploy: `stencil bundle` → upload zip to BC store admin
+
+## Tunnelling for local dev
+
+```bash
+node src/index.ts        # or npm run dev in app/
+ngrok http 3000          # expose backend over HTTPS
+# In BC admin → Storefront → My Themes → Customise → Okuma → set Parts Book API URL to ngrok URL
+# Add BC store domain to CORS_ORIGINS in app/.env, then restart
+```
+
+## Code format
+
+Prettier: `singleQuote: true`, `trailingComma: es5`, `printWidth: 120`, `tabWidth: 4`, `semi: true`, `arrowParens: avoid`
+ESLint: airbnb-base + @typescript-eslint (strict mode). Lint runs as a pre-commit hook via Husky + lint-staged.
 </codebase_stack>
 
 <system_instructions>

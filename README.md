@@ -24,7 +24,7 @@ Okuma-BC/
 
 ## app/ — Node.js/Express Backend
 
-Express server on port **3001** providing Parts Book API endpoints. Fetches data from the BC CDN and BC Management API server-side; never exposes `BC_ACCESS_TOKEN` to the browser.
+Express server on port **3000** by default (override with `PORT` env var — if the port is in use, the server automatically binds to the next available port). Provides Parts Book API endpoints. Fetches data from the BC CDN and BC Management API server-side; never exposes `BC_ACCESS_TOKEN` to the browser.
 
 ### Setup
 
@@ -57,16 +57,40 @@ node src/index.js
 | `BC_WEBDAV_USER` | No | WebDAV username for CDN asset uploads |
 | `BC_WEBDAV_PASS` | No | WebDAV password |
 
+### Authentication
+
+All `/api/*` routes require a valid BigCommerce `X-Auth-Token` header. The middleware validates the token by calling `GET /v2/store` on the BC REST API — a 2xx response confirms the token is valid.
+
+**Header:**
+```
+X-Auth-Token: <your BC_ACCESS_TOKEN>
+```
+
+**Responses when auth fails:**
+
+| Scenario | Status | Body |
+|----------|--------|------|
+| Header missing | `401` | `{ "error": "Missing X-Auth-Token header" }` |
+| Token invalid / rejected by BC | `401` | `{ "error": "Invalid X-Auth-Token" }` |
+
+The following routes are **public** (no token required):
+
+| Route | Reason |
+|-------|--------|
+| `GET /health` | Liveness probe |
+| `GET /auth/callback` | BC OAuth install flow |
+| `POST /webhooks/order` | BC webhook — verified via HMAC-SHA256 instead |
+
 ### API endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check — returns `{ status: "ok" }` |
-| `GET` | `/api/parts-book/toc` | Full TOC of all machine PDFs with assemblies, sheets, and category images |
-| `GET` | `/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts` | Parts list and diagram URL for a specific sheet |
-| `GET` | `/api/machines` | All BC machine model categories with `imageUrl` and `pubNo` (unauthenticated) |
-| `GET` | `/api/customer/:customerId/machines` | Registered machines for a customer enriched with category image |
-| `GET` | `/api/parts-book/machine/verify` | Machine verification stub |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Health check — returns `{ status: "ok" }` |
+| `GET` | `/api/parts-book/toc` | Yes | Full TOC of all machine PDFs with assemblies, sheets, and category images |
+| `GET` | `/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts` | Yes | Parts list and diagram URL for a specific sheet |
+| `GET` | `/api/machines` | Yes | All BC machine model categories with `imageUrl` and `pubNo` |
+| `GET` | `/api/customer/:customerId/machines` | Yes | Registered machines for a customer enriched with category image |
+| `GET` | `/api/parts-book/machine/verify` | Yes | Machine verification stub |
 
 ---
 
@@ -102,8 +126,8 @@ https://store-tb0nfpch8c.mybigcommerce.com/content/parts-book/
 
 The Express backend runs locally and must be exposed over HTTPS for the BC sandbox storefront to reach it.
 
-1. Start the Express server: `node src/index.js` (port 3001)
-2. In a separate terminal: `ngrok http 3001` — copy the HTTPS URL
+1. Start the Express server: `npm run dev` in `app/` (default port 3000)
+2. In a separate terminal: `ngrok http 3000` — copy the HTTPS URL
 3. In BC admin → Storefront → My Themes → Customise → **Okuma** section → set `Parts Book API URL` to the ngrok URL
 4. Update `CORS_ORIGINS` in `app/.env` to include the BC store domain, then restart Express
 

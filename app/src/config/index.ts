@@ -1,6 +1,8 @@
+import path from 'path';
 import dotenv from 'dotenv';
 
-dotenv.config();
+// Resolves to app/.env from both app/src/config/ (tsx dev) and app/dist/config/ (compiled)
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 interface BcConfig {
     clientId: string | undefined;
@@ -21,7 +23,7 @@ interface AppConfig {
 }
 
 const config: AppConfig = {
-    port: parseInt(process.env.PORT ?? '3001', 10),
+    port: parseInt(process.env.PORT || '3000', 10),
     sessionSecret: process.env.SESSION_SECRET,
     bc: {
         clientId: process.env.BC_CLIENT_ID,

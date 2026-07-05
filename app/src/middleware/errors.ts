@@ -1,3 +1,4 @@
+/* eslint-disable max-classes-per-file */
 export class AppError extends Error {
     status: number;
 
@@ -20,5 +21,11 @@ export class ValidationError extends AppError {
 export class NotFoundError extends AppError {
     constructor(message = 'Not found') {
         super(message, 404);
+    }
+}
+
+export class UnauthorizedError extends AppError {
+    constructor(message = 'Unauthorized') {
+        super(message, 401);
     }
 }
