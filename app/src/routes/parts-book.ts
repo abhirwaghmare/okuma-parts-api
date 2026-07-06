@@ -155,6 +155,15 @@ async function fetchCategoryImages(categoryIds: number[]): Promise<Record<number
 // Routes
 // ---------------------------------------------------------------------------
 
+/**
+ * GET /api/parts-book/toc
+ * GET /api/parts-book/toc?id=<pdfId>
+ *
+ * Without ?id  — returns the full table of contents enriched with BC CDN image
+ *               paths and category images.
+ * With    ?id  — returns a single document entry matching that pdfId.
+ *               Responds 404 when the id is not found.
+ */
 router.get('/api/parts-book/toc', async (req, res) => {
     const toc = await fetchDataJson<Toc>('toc.json');
 
@@ -165,16 +174,31 @@ router.get('/api/parts-book/toc', async (req, res) => {
 
     const rewritten = rewriteTocImagePaths(toc);
 
-    const categoryIds = rewritten.documents
+    // When ?id is provided, scope to that single document only
+    const { id } = req.query;
+    const sourceDocuments = id
+        ? rewritten.documents.filter(d => d.id === id)
+        : rewritten.documents;
+
+    if (id && sourceDocuments.length === 0) {
+        return res.status(404).json({ error: `Document '${id}' not found.` });
+    }
+
+    const categoryIds = sourceDocuments
         .map(d => d.category_id)
         .filter((id): id is number => typeof id === 'number');
 
     const categoryImages = await fetchCategoryImages([...new Set(categoryIds)]);
 
-    const documents = rewritten.documents.map(doc => ({
+    const documents = sourceDocuments.map(doc => ({
         ...doc,
         category_image: doc.category_id ? (categoryImages[doc.category_id] ?? '') : '',
     }));
+
+    // When a single document was requested return it unwrapped for convenience
+    if (id) {
+        return res.json(documents[0]);
+    }
 
     return res.json({ ...rewritten, documents });
 });
@@ -303,41 +327,37 @@ function parsePubNo(description: string | undefined): string | null {
     return m ? m[1] : null;
 }
 
-router.get('/api/machines', async (_req, res) => {
-    try {
-        const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
-            params: {
-                'parent_id:in': MACHINE_PARENT_IDS.join(','),
-                limit: 250,
-                include_fields: 'id,name,image_url,parent_id,description',
-            },
-        });
-
-        const machines = (response.data?.data ?? []).map(cat => ({
-            categoryId: cat.id,
-            name: cat.name,
-            machineType: PARENT_LABELS[cat.parent_id] ?? null,
-            imageUrl: cat.image_url ?? '',
-            pubNo: parsePubNo(cat.description),
-        }));
-
-        return res.json({ machines });
-    } catch (err) {
-        console.error('machines: BC category fetch failed:', (err as Error).message);
-        return res.status(500).json({ error: 'Could not load machine list.' });
-    }
-});
-
 interface MachineCategory {
     categoryId: number;
     name: string;
     machineType: string | null;
     imageUrl: string;
-    pubNo: string | null;
+    pubNo?: string | null;
+    pubNos?: string[] | string | null;
     _normalised: string;
 }
 
+// Cache for machine categories — avoids a BC API call on every request.
+// TTL of 5 minutes; categories change rarely in production.
+let _machineCategoryCache: MachineCategory[] | null = null;
+let _machineCategoryCachedAt = 0;
+const MACHINE_CATEGORY_TTL = 5 * 60 * 1000;
+
+/**
+ * Fetch all machine model categories from BC OOTB categories API and cache
+ * the result for MACHINE_CATEGORY_TTL milliseconds.
+ *
+ * BC OOTB: GET /v3/catalog/categories?parent_id:in=301,302,303,304
+ *   &include_fields=id,name,image_url,parent_id,description&limit=250
+ *
+ * image_url  → category image (direct from BC)
+ * description → pub numbers parsed out of the HTML description field
+ */
 async function fetchMachineCategories(): Promise<MachineCategory[]> {
+    const now = Date.now();
+    if (_machineCategoryCache && now - _machineCategoryCachedAt < MACHINE_CATEGORY_TTL) {
+        return _machineCategoryCache;
+    }
     const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
         params: {
             'parent_id:in': MACHINE_PARENT_IDS.join(','),
@@ -345,7 +365,7 @@ async function fetchMachineCategories(): Promise<MachineCategory[]> {
             include_fields: 'id,name,image_url,parent_id,description',
         },
     });
-    return (response.data?.data ?? []).map(cat => ({
+    _machineCategoryCache = (response.data?.data ?? []).map(cat => ({
         categoryId: cat.id,
         name: cat.name,
         machineType: PARENT_LABELS[cat.parent_id] ?? null,
@@ -353,7 +373,33 @@ async function fetchMachineCategories(): Promise<MachineCategory[]> {
         pubNo: parsePubNo(cat.description),
         _normalised: cat.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
     }));
+    _machineCategoryCachedAt = now;
+    return _machineCategoryCache;
 }
+
+/**
+ * GET /api/machines
+ *
+ * Returns all machine model categories enriched with BC category image
+ * (image_url from BC OOTB) and pub number parsed from the BC description field.
+ * Uses the shared fetchMachineCategories cache — no extra BC call when warm.
+ */
+router.get('/api/machines', async (_req, res) => {
+    try {
+        const categories = await fetchMachineCategories();
+        const machines = categories.map(cat => ({
+            categoryId: cat.categoryId,
+            name: cat.name,
+            machineType: cat.machineType,
+            imageUrl: cat.imageUrl,
+            pubNos: cat.pubNos ?? cat.pubNo ?? null,
+        }));
+        return res.json({ machines });
+    } catch (err) {
+        console.error('machines: BC category fetch failed:', (err as Error).message);
+        return res.status(500).json({ error: 'Could not load machine list.' });
+    }
+});
 
 function matchCategory(modelName: string | undefined, categories: MachineCategory[]): MachineCategory | null {
     if (!modelName) return null;
