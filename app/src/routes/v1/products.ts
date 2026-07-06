@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { AxiosError } from 'axios';
-import bcClient from '../services/bigcommerce';
+import bcClient from '../../services/bigcommerce';
 
 const router = Router();
 

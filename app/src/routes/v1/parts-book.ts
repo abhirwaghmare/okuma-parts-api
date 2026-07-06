@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { Router } from 'express';
-import config from '../config';
-import bcClient from '../services/bigcommerce';
+import config from '../../config';
+import logger from '../../config/logger';
+import bcClient from '../../services/bigcommerce';
 
 const router = Router();
 
@@ -87,7 +88,7 @@ async function fetchDataJson<T>(relativePath: string): Promise<T | null> {
         if (axios.isAxiosError(err) && err.response?.status === 404) {
             return null;
         }
-        console.error(`parts-book: failed to fetch ${url}:`, (err as Error).message);
+        logger.error(`parts-book: failed to fetch ${url}:`, (err as Error).message);
         return null;
     }
 }
@@ -146,7 +147,7 @@ async function fetchCategoryImages(categoryIds: number[]): Promise<Record<number
         });
         return result;
     } catch (err) {
-        console.error('parts-book: category image lookup failed:', (err as Error).message);
+        logger.error('parts-book: category image lookup failed:', (err as Error).message);
         return {};
     }
 }
@@ -155,11 +156,11 @@ async function fetchCategoryImages(categoryIds: number[]): Promise<Record<number
 // Routes
 // ---------------------------------------------------------------------------
 
-router.get('/api/parts-book/toc', async (req, res) => {
+router.get('/parts-book/toc', async (req, res) => {
     const toc = await fetchDataJson<Toc>('toc.json');
 
     if (!toc) {
-        console.error('parts-book: toc.json not found at', config.partsBook.cdnBaseUrl);
+        logger.error('parts-book: toc.json not found at', config.partsBook.cdnBaseUrl);
         return res.status(500).json({ error: 'Table of contents not available.' });
     }
 
@@ -179,13 +180,13 @@ router.get('/api/parts-book/toc', async (req, res) => {
     return res.json({ ...rewritten, documents });
 });
 
-router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async (req, res) => {
+router.get('/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async (req, res) => {
     const { pdfId, assemblySlug, sheetSlug } = req.params;
 
     const toc = await fetchDataJson<Toc>('toc.json');
 
     if (!toc) {
-        console.error('parts-book: toc.json not found');
+        logger.error('parts-book: toc.json not found');
         return res.status(500).json({ error: 'Table of contents not available.' });
     }
 
@@ -207,7 +208,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
     const partsData = await fetchDataJson<PartsData>(sheet.parts_json);
 
     if (!partsData) {
-        console.error(`parts-book: parts.json not found at ${sheet.parts_json}`);
+        logger.error(`parts-book: parts.json not found at ${sheet.parts_json}`);
         return res.status(500).json({ error: 'Parts data not available for this sheet.' });
     }
 
@@ -242,7 +243,7 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
                 };
             });
         } catch (err) {
-            console.error('parts-book: BC product lookup failed:', (err as Error).message);
+            logger.error('parts-book: BC product lookup failed:', (err as Error).message);
         }
     }
 
@@ -303,7 +304,7 @@ function parsePubNo(description: string | undefined): string | null {
     return m ? m[1] : null;
 }
 
-router.get('/api/machines', async (_req, res) => {
+router.get('/machines', async (_req, res) => {
     try {
         const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
             params: {
@@ -323,7 +324,7 @@ router.get('/api/machines', async (_req, res) => {
 
         return res.json({ machines });
     } catch (err) {
-        console.error('machines: BC category fetch failed:', (err as Error).message);
+        logger.error('machines: BC category fetch failed:', (err as Error).message);
         return res.status(500).json({ error: 'Could not load machine list.' });
     }
 });
@@ -382,7 +383,7 @@ interface RawMachine {
     status?: string;
 }
 
-router.get('/api/customer/:customerId/machines', async (req, res) => {
+router.get('/customer/:customerId/machines', async (req, res) => {
     const { customerId } = req.params;
 
     if (!customerId || !/^\d+$/.test(customerId)) {
@@ -408,7 +409,7 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
         try {
             rawMachines = JSON.parse(rmField.value) as RawMachine[];
         } catch {
-            console.error(`customer ${customerId}: registered_machines metafield is not valid JSON`);
+            logger.error(`customer ${customerId}: registered_machines metafield is not valid JSON`);
             return res.json({ machines: [] });
         }
 
@@ -434,12 +435,12 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
 
         return res.json({ machines });
     } catch (err) {
-        console.error(`customer ${customerId}: machine lookup failed:`, (err as Error).message);
+        logger.error(`customer ${customerId}: machine lookup failed:`, (err as Error).message);
         return res.status(500).json({ error: 'Could not load customer machines.' });
     }
 });
 
-router.get('/api/parts-book/machine/verify', (req, res) => {
+router.get('/parts-book/machine/verify', (req, res) => {
     const { serialNo } = req.query;
 
     if (!serialNo) {
