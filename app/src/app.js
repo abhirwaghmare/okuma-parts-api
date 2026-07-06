@@ -11,14 +11,12 @@ const errorHandler = require('./middleware/errorHandler');
 const app = express();
 
 app.use(morgan('dev'));
+
 const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
     : ['http://localhost:3000', 'http://localhost:3001'];
 
-app.use(cors({
-    origin: corsOrigins,
-    credentials: true,
-}));
+app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json());
 
 app.use(
@@ -32,9 +30,5 @@ app.use(
 
 app.use(routes);
 app.use(errorHandler);
-
-app.listen(config.port, () => {
-    console.info(`Okuma BC app running on port ${config.port}`);
-});
 
 module.exports = app;

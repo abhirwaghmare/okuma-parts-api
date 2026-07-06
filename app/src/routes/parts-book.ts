@@ -1,52 +1,104 @@
-'use strict';
-
-const axios = require('axios');
-const { Router } = require('express');
-const config = require('../config');
-const bcClient = require('../services/bigcommerce');
+import axios from 'axios';
+import { Router } from 'express';
+import config from '../config';
+import bcClient from '../services/bigcommerce';
 
 const router = Router();
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface TocSheet {
+    id: string;
+    slug: string;
+    label: string;
+    sheet_number: number;
+    assembly_image?: string;
+    parts_json: string;
+}
+
+interface TocAssembly {
+    slug: string;
+    overview_image?: string;
+    sheets: TocSheet[];
+}
+
+interface TocDocument {
+    id: string;
+    overview_image?: string;
+    category_id?: number;
+    assemblies: TocAssembly[];
+}
+
+interface Toc {
+    documents: TocDocument[];
+}
+
+interface RawPart {
+    callout_number?: unknown;
+    sheet_item?: unknown;
+    part_no?: string;
+    description?: string;
+    unit_no?: unknown;
+    qty?: unknown;
+    callout_box_2d?: number[];
+    has_table_match?: boolean;
+}
+
+interface PartsData {
+    parts: RawPart[];
+}
+
+interface BcLookupEntry {
+    productId: number | null;
+    price: number | null;
+    inStock: boolean;
+}
+
+interface BcProduct {
+    id: number;
+    sku: string;
+    price: number;
+    inventory_level: number;
+    inventory_tracking: string;
+    availability: string;
+}
+
+interface BcCategory {
+    id: number;
+    name: string;
+    image_url?: string;
+    parent_id: number;
+    description?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Fetch and parse a JSON file from the BC CDN content store.
- * Returns null on 404, network error, or parse failure.
- *
- * @param {string} relativePath - Path relative to cdnBaseUrl (forward slashes).
- * @returns {Promise<object|null>}
- */
-async function fetchDataJson(relativePath) {
+async function fetchDataJson<T>(relativePath: string): Promise<T | null> {
     const cdnBase = config.partsBook.cdnBaseUrl;
     const url = `${cdnBase}/${relativePath}`;
     try {
-        const res = await axios.get(url, { timeout: 15000 });
+        const res = await axios.get<T>(url, { timeout: 15000 });
         return res.data;
     } catch (err) {
-        if (err.response && err.response.status === 404) {
+        if (axios.isAxiosError(err) && err.response?.status === 404) {
             return null;
         }
-        console.error(`parts-book: failed to fetch ${url}:`, err.message);
+        console.error(`parts-book: failed to fetch ${url}:`, (err as Error).message);
         return null;
     }
 }
 
-/**
- * Rewrite image paths in a TOC document so every `overview_image` and
- * `assembly_image` field becomes a full BC CDN URL the browser can fetch.
- *
- * @param {object} toc - The raw toc.json object.
- * @returns {object} - A deep-cloned copy with rewritten image paths.
- */
-function rewriteTocImagePaths(toc) {
+function rewriteTocImagePaths(toc: Toc): Toc {
     const cdnBase = config.partsBook.cdnBaseUrl;
-    const rewrite = relPath => `${cdnBase}/${relPath}`;
+    const rewrite = (relPath: string) => `${cdnBase}/${relPath}`;
 
-    const documents = (toc.documents || []).map(doc => {
-        const assemblies = (doc.assemblies || []).map(assembly => {
-            const sheets = (assembly.sheets || []).map(sheet => ({
+    const documents = toc.documents.map(doc => {
+        const assemblies = doc.assemblies.map(assembly => {
+            const sheets = assembly.sheets.map(sheet => ({
                 ...sheet,
                 assembly_image: sheet.assembly_image ? rewrite(sheet.assembly_image) : sheet.assembly_image,
             }));
@@ -68,54 +120,40 @@ function rewriteTocImagePaths(toc) {
     return { ...toc, documents };
 }
 
-/**
- * Convert a callout_box_2d coordinate ([ymin, xmin, ymax, xmax] in 0-1000 space)
- * to centre-percentage values suitable for CSS `left`/`top` positioning.
- *
- * @param {number[]} box - [ymin, xmin, ymax, xmax] — must have exactly 4 numeric elements.
- * @returns {{ calloutX: number, calloutY: number }|null} - null when the box is malformed.
- */
-function boxToPercent(box) {
+function boxToPercent(box: number[]): { calloutX: number; calloutY: number } | null {
     if (!Array.isArray(box) || box.length !== 4 || box.some(v => typeof v !== 'number' || Number.isNaN(v))) {
         return null;
     }
     const [ymin, xmin, ymax, xmax] = box;
-    const cx = parseFloat((((xmin + xmax) / 2) / 10).toFixed(2));
-    const cy = parseFloat((((ymin + ymax) / 2) / 10).toFixed(2));
+    const cx = parseFloat(((xmin + xmax) / 2 / 10).toFixed(2));
+    const cy = parseFloat(((ymin + ymax) / 2 / 10).toFixed(2));
     return { calloutX: cx, calloutY: cy };
 }
 
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
-
-/**
- * Fetch category images from BC for any toc documents that have a category_id.
- * Returns a map of category_id → image_url (empty string when no image).
- *
- * @param {number[]} categoryIds
- * @returns {Promise<Object.<number, string>>}
- */
-async function fetchCategoryImages(categoryIds) {
+async function fetchCategoryImages(categoryIds: number[]): Promise<Record<number, string>> {
     if (!categoryIds.length) return {};
     try {
-        const response = await bcClient.get('/v3/catalog/categories', {
+        const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
             params: {
                 'id:in': categoryIds.join(','),
                 limit: categoryIds.length,
                 include_fields: 'id,image_url',
             },
         });
-        const result = {};
+        const result: Record<number, string> = {};
         (response.data?.data || []).forEach(cat => {
-            result[cat.id] = cat.image_url || '';
+            result[cat.id] = cat.image_url ?? '';
         });
         return result;
     } catch (err) {
-        console.error('parts-book: category image lookup failed:', err.message);
+        console.error('parts-book: category image lookup failed:', (err as Error).message);
         return {};
     }
 }
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
 
 /**
  * GET /api/parts-book/toc
@@ -127,7 +165,7 @@ async function fetchCategoryImages(categoryIds) {
  *               Responds 404 when the id is not found.
  */
 router.get('/api/parts-book/toc', async (req, res) => {
-    const toc = await fetchDataJson('toc.json');
+    const toc = await fetchDataJson<Toc>('toc.json');
 
     if (!toc) {
         console.error('parts-book: toc.json not found at', config.partsBook.cdnBaseUrl);
@@ -148,13 +186,13 @@ router.get('/api/parts-book/toc', async (req, res) => {
 
     const categoryIds = sourceDocuments
         .map(d => d.category_id)
-        .filter(cid => typeof cid === 'number');
+        .filter((id): id is number => typeof id === 'number');
 
     const categoryImages = await fetchCategoryImages([...new Set(categoryIds)]);
 
     const documents = sourceDocuments.map(doc => ({
         ...doc,
-        category_image: doc.category_id ? (categoryImages[doc.category_id] || '') : '',
+        category_image: doc.category_id ? (categoryImages[doc.category_id] ?? '') : '',
     }));
 
     // When a single document was requested return it unwrapped for convenience
@@ -165,94 +203,49 @@ router.get('/api/parts-book/toc', async (req, res) => {
     return res.json({ ...rewritten, documents });
 });
 
-/**
- * GET /api/parts-book/machines/:pdfId/assemblies
- *
- * Returns all assembly groups for a given machine (pdfId), each with its
- * slug, label, overview image URL, and the list of sheets it contains.
- */
-router.get('/api/parts-book/machines/:pdfId/assemblies', async (req, res) => {
-    const { pdfId } = req.params;
-
-    const toc = await fetchDataJson('toc.json');
-    if (!toc) {
-        console.error('parts-book: toc.json not found');
-        return res.status(500).json({ error: 'Table of contents not available.' });
-    }
-
-    const doc = (toc.documents || []).find(d => d.id === pdfId);
-    if (!doc) {
-        return res.status(404).json({ error: `Document '${pdfId}' not found.` });
-    }
-
-    const cdnBase = config.partsBook.cdnBaseUrl;
-
-    const assemblies = (doc.assemblies || []).map(assembly => ({
-        slug: assembly.slug,
-        label: assembly.label,
-        overviewImage: assembly.overview_image ? `${cdnBase}/${assembly.overview_image}` : null,
-        sheets: (assembly.sheets || []).map(sheet => ({
-            slug: sheet.slug,
-            label: sheet.label,
-        })),
-    }));
-
-    return res.json({ pdfId, assemblies });
-});
-
-/**
- * GET /api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts
- *
- * Returns all parts for a given sheet, enriched with BC price/inventory data
- * and diagram callout coordinates as CSS percentages.
- */
 router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async (req, res) => {
     const { pdfId, assemblySlug, sheetSlug } = req.params;
 
-    // -- Locate the sheet entry in the TOC ----------------------------------
-    const toc = await fetchDataJson('toc.json');
+    const toc = await fetchDataJson<Toc>('toc.json');
 
     if (!toc) {
         console.error('parts-book: toc.json not found');
         return res.status(500).json({ error: 'Table of contents not available.' });
     }
 
-    const doc = (toc.documents || []).find(d => d.id === pdfId);
+    const doc = toc.documents.find(d => d.id === pdfId);
     if (!doc) {
         return res.status(404).json({ error: `Document '${pdfId}' not found.` });
     }
 
-    const assembly = (doc.assemblies || []).find(a => a.slug === assemblySlug);
+    const assembly = doc.assemblies.find(a => a.slug === assemblySlug);
     if (!assembly) {
         return res.status(404).json({ error: `Assembly '${assemblySlug}' not found.` });
     }
 
-    const sheet = (assembly.sheets || []).find(s => s.slug === sheetSlug);
+    const sheet = assembly.sheets.find(s => s.slug === sheetSlug);
     if (!sheet) {
         return res.status(404).json({ error: `Sheet '${sheetSlug}' not found.` });
     }
 
-    // -- Read the parts JSON for this sheet ---------------------------------
-    const partsData = await fetchDataJson(sheet.parts_json);
+    const partsData = await fetchDataJson<PartsData>(sheet.parts_json);
 
     if (!partsData) {
         console.error(`parts-book: parts.json not found at ${sheet.parts_json}`);
         return res.status(500).json({ error: 'Parts data not available for this sheet.' });
     }
 
-    const rawParts = partsData.parts || [];
+    const rawParts = partsData.parts ?? [];
 
-    // -- Batch-fetch BC product data for matched parts ----------------------
     const matchedSkus = [
-        ...new Set(rawParts.filter(p => p.has_table_match && p.part_no).map(p => p.part_no)),
+        ...new Set(rawParts.filter(p => p.has_table_match && p.part_no).map(p => p.part_no as string)),
     ];
 
-    /** @type {Object.<string, { productId: number|null, price: number|null, inStock: boolean }>} */
-    const bcLookup = {};
+    const bcLookup: Record<string, BcLookupEntry> = {};
 
     if (matchedSkus.length > 0) {
         try {
-            const response = await bcClient.get('/v3/catalog/products', {
+            const response = await bcClient.get<{ data: BcProduct[] }>('/v3/catalog/products', {
                 params: {
                     'sku:in': matchedSkus.join(','),
                     limit: 50,
@@ -260,12 +253,11 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
                 },
             });
 
-            const bcProducts = response.data?.data || [];
+            const bcProducts = response.data?.data ?? [];
 
             bcProducts.forEach(product => {
                 const notTracked = product.inventory_tracking === 'none';
-                const inStock =
-                    product.availability === 'available' && (notTracked || product.inventory_level > 0);
+                const inStock = product.availability === 'available' && (notTracked || product.inventory_level > 0);
 
                 bcLookup[product.sku] = {
                     productId: product.id,
@@ -274,16 +266,15 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
                 };
             });
         } catch (err) {
-            console.error('parts-book: BC product lookup failed:', err.message);
+            console.error('parts-book: BC product lookup failed:', (err as Error).message);
         }
     }
 
-    // -- Build response parts -----------------------------------------------
     const parts = rawParts.map(p => {
         const coords = p.callout_box_2d != null ? boxToPercent(p.callout_box_2d) : null;
-        const { calloutX = null, calloutY = null } = coords || {};
+        const { calloutX = null, calloutY = null } = coords ?? {};
 
-        const bc = bcLookup[p.part_no] || null;
+        const bc = p.part_no ? (bcLookup[p.part_no] ?? null) : null;
 
         return {
             calloutNumber: p.callout_number,
@@ -314,9 +305,13 @@ router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async
     });
 });
 
+// ---------------------------------------------------------------------------
+// Machines
+// ---------------------------------------------------------------------------
+
 const MACHINE_PARENT_IDS = [301, 302, 303, 304];
 
-const PARENT_LABELS = {
+const PARENT_LABELS: Record<number, string> = {
     301: 'Grinding Machines',
     302: 'Turning Centers',
     303: 'Multi-Tasking Machines',
@@ -325,16 +320,26 @@ const PARENT_LABELS = {
 
 const PUB_NO_RE = /Pub\s+No\.\s*([A-Z]{2}\d{2}-\d{3}-[A-Z0-9]+)/i;
 
-function parsePubNos(description) {
-    if (!description) return [];
+function parsePubNo(description: string | undefined): string | null {
+    if (!description) return null;
     const plain = description.replace(/<[^>]+>/g, ' ');
-    const matches = [...plain.matchAll(new RegExp(PUB_NO_RE.source, 'gi'))];
-    return matches.map(m => m[1]);
+    const m = plain.match(PUB_NO_RE);
+    return m ? m[1] : null;
+}
+
+interface MachineCategory {
+    categoryId: number;
+    name: string;
+    machineType: string | null;
+    imageUrl: string;
+    pubNo?: string | null;
+    pubNos?: string[] | string | null;
+    _normalised: string;
 }
 
 // Cache for machine categories — avoids a BC API call on every request.
 // TTL of 5 minutes; categories change rarely in production.
-let _machineCategoryCache = null;
+let _machineCategoryCache: MachineCategory[] | null = null;
 let _machineCategoryCachedAt = 0;
 const MACHINE_CATEGORY_TTL = 5 * 60 * 1000;
 
@@ -347,27 +352,25 @@ const MACHINE_CATEGORY_TTL = 5 * 60 * 1000;
  *
  * image_url  → category image (direct from BC)
  * description → pub numbers parsed out of the HTML description field
- *
- * @returns {Promise<Array>}
  */
-async function fetchMachineCategories() {
+async function fetchMachineCategories(): Promise<MachineCategory[]> {
     const now = Date.now();
     if (_machineCategoryCache && now - _machineCategoryCachedAt < MACHINE_CATEGORY_TTL) {
         return _machineCategoryCache;
     }
-    const response = await bcClient.get('/v3/catalog/categories', {
+    const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
         params: {
             'parent_id:in': MACHINE_PARENT_IDS.join(','),
             limit: 250,
             include_fields: 'id,name,image_url,parent_id,description',
         },
     });
-    _machineCategoryCache = (response.data && response.data.data ? response.data.data : []).map(cat => ({
+    _machineCategoryCache = (response.data?.data ?? []).map(cat => ({
         categoryId: cat.id,
         name: cat.name,
-        machineType: PARENT_LABELS[cat.parent_id] || null,
-        imageUrl: cat.image_url || '',
-        pubNos: parsePubNos(cat.description),
+        machineType: PARENT_LABELS[cat.parent_id] ?? null,
+        imageUrl: cat.image_url ?? '',
+        pubNo: parsePubNo(cat.description),
         _normalised: cat.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
     }));
     _machineCategoryCachedAt = now;
@@ -381,7 +384,7 @@ async function fetchMachineCategories() {
  * (image_url from BC OOTB) and pub number parsed from the BC description field.
  * Uses the shared fetchMachineCategories cache — no extra BC call when warm.
  */
-router.get('/api/machines', async (req, res) => {
+router.get('/api/machines', async (_req, res) => {
     try {
         const categories = await fetchMachineCategories();
         const machines = categories.map(cat => ({
@@ -389,28 +392,25 @@ router.get('/api/machines', async (req, res) => {
             name: cat.name,
             machineType: cat.machineType,
             imageUrl: cat.imageUrl,
-            pubNos: cat.pubNos,
+            pubNos: cat.pubNos ?? cat.pubNo ?? null,
         }));
         return res.json({ machines });
     } catch (err) {
-        console.error('machines: BC category fetch failed:', err.message);
+        console.error('machines: BC category fetch failed:', (err as Error).message);
         return res.status(500).json({ error: 'Could not load machine list.' });
     }
 });
 
-function matchCategory(modelName, categories) {
+function matchCategory(modelName: string | undefined, categories: MachineCategory[]): MachineCategory | null {
     if (!modelName) return null;
     const norm = modelName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    // 1. Exact normalised match
     const exact = categories.find(c => c._normalised === norm);
     if (exact) return exact;
 
-    // 2. Substring match (one contains the other)
     const sub = categories.find(c => norm.includes(c._normalised) || c._normalised.includes(norm));
     if (sub) return sub;
 
-    // 3. Series match — first alphabetic token (e.g. "GENOS M460-VE" → "genos")
     const series = modelName.toLowerCase().match(/^[a-z]+/);
     if (series) {
         const seriesNorm = series[0];
@@ -421,12 +421,13 @@ function matchCategory(modelName, categories) {
     return null;
 }
 
-/**
- * GET /api/customer/:customerId/machines
- *
- * Returns the registered machines for a specific customer, enriched with
- * BC category images matched by model name.
- */
+interface RawMachine {
+    serial?: string;
+    model?: string;
+    install_date?: string;
+    status?: string;
+}
+
 router.get('/api/customer/:customerId/machines', async (req, res) => {
     const { customerId } = req.params;
 
@@ -436,20 +437,22 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
 
     try {
         const [metaRes, categories] = await Promise.all([
-            bcClient.get(`/v3/customers/${customerId}/metafields`),
+            bcClient.get<{ data: Array<{ key: string; namespace: string; value: string }> }>(
+                `/v3/customers/${customerId}/metafields`
+            ),
             fetchMachineCategories(),
         ]);
 
-        const metafields = metaRes.data?.data || [];
+        const metafields = metaRes.data?.data ?? [];
         const rmField = metafields.find(m => m.key === 'registered_machines' && m.namespace === 'okuma');
 
         if (!rmField) {
             return res.json({ machines: [] });
         }
 
-        let rawMachines;
+        let rawMachines: RawMachine[];
         try {
-            rawMachines = JSON.parse(rmField.value);
+            rawMachines = JSON.parse(rmField.value) as RawMachine[];
         } catch {
             console.error(`customer ${customerId}: registered_machines metafield is not valid JSON`);
             return res.json({ machines: [] });
@@ -464,12 +467,12 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
             .map(m => {
                 const cat = matchCategory(m.model, categories);
                 return {
-                    serial: m.serial || null,
-                    model: m.model || null,
-                    installDate: m.install_date || null,
-                    status: m.status || null,
+                    serial: m.serial ?? null,
+                    model: m.model ?? null,
+                    installDate: m.install_date ?? null,
+                    status: m.status ?? null,
                     imageUrl: cat ? cat.imageUrl : '',
-                    pubNos: cat ? cat.pubNos : [],
+                    pubNo: cat ? cat.pubNo : null,
                     machineType: cat ? cat.machineType : null,
                     categoryId: cat ? cat.categoryId : null,
                 };
@@ -477,17 +480,11 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
 
         return res.json({ machines });
     } catch (err) {
-        console.error(`customer ${customerId}: machine lookup failed:`, err.message);
+        console.error(`customer ${customerId}: machine lookup failed:`, (err as Error).message);
         return res.status(500).json({ error: 'Could not load customer machines.' });
     }
 });
 
-/**
- * GET /api/parts-book/machine/verify
- *
- * Stub endpoint for machine serial-number verification.
- * Query param: serialNo
- */
 router.get('/api/parts-book/machine/verify', (req, res) => {
     const { serialNo } = req.query;
 
@@ -503,4 +500,4 @@ router.get('/api/parts-book/machine/verify', (req, res) => {
     });
 });
 
-module.exports = router;
+export default router;
