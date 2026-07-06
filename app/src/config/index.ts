@@ -20,6 +20,10 @@ interface AppConfig {
     partsBook: {
         cdnBaseUrl: string | undefined;
     };
+    rateLimit: {
+        windowMs: number;
+        max: number;
+    };
 }
 
 const config: AppConfig = {
@@ -35,6 +39,10 @@ const config: AppConfig = {
     },
     partsBook: {
         cdnBaseUrl: process.env.PARTS_BOOK_CDN_BASE_URL,
+    },
+    rateLimit: {
+        windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
+        max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
     },
 };
 
