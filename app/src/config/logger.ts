@@ -6,7 +6,7 @@ const devFormat = format.combine(
     format.colorize(),
     format.timestamp({ format: 'HH:mm:ss' }),
     format.errors({ stack: true }),
-    format.printf(({ level, message, timestamp, stack }) =>
+    format.printf(({ level, message, timestamp, stack }: Record<string, unknown>) =>
         stack ? `[${timestamp}] ${level}: ${message}\n${stack}` : `[${timestamp}] ${level}: ${message}`
     )
 );

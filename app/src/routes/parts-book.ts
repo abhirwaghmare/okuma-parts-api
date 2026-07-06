@@ -389,6 +389,8 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
         return res.status(400).json({ error: 'Invalid customerId.' });
     }
 
+    // TODO: add auth guard once session population is confirmed (req.session.customerId === customerId)
+
     try {
         const [metaRes, categories] = await Promise.all([
             bcClient.get<{ data: Array<{ key: string; namespace: string; value: string }> }>(
@@ -427,6 +429,7 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
                     status: m.status ?? null,
                     imageUrl: cat ? cat.imageUrl : '',
                     pubNo: cat ? cat.pubNo : null,
+                    hasPartsBook: !!(cat && cat.pubNo),
                     machineType: cat ? cat.machineType : null,
                     categoryId: cat ? cat.categoryId : null,
                 };
