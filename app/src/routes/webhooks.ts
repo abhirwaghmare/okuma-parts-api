@@ -1,6 +1,8 @@
 import express, { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import config from '../config';
+import logger from '../config/logger';
+import { AppError, UnauthorizedError } from '../middleware/errors';
 
 interface WebhookPayload {
     hash?: string;
@@ -32,17 +34,17 @@ function verifySignature(rawBody: Buffer, hash: string | undefined): boolean {
     }
 }
 
-function parseAndVerify(req: Request, res: Response, next: NextFunction): void {
+function parseAndVerify(req: Request, _res: Response, next: NextFunction): void {
     let payload: WebhookPayload;
     try {
         payload = JSON.parse((req.body as Buffer).toString()) as WebhookPayload;
     } catch {
-        res.status(400).json({ error: 'Invalid JSON payload' });
+        next(new AppError('Invalid JSON payload', 400));
         return;
     }
 
     if (!verifySignature(req.body as Buffer, payload.hash)) {
-        res.status(401).json({ error: 'Invalid webhook signature' });
+        next(new UnauthorizedError('Invalid webhook signature'));
         return;
     }
 
@@ -52,14 +54,14 @@ function parseAndVerify(req: Request, res: Response, next: NextFunction): void {
 
 async function handleOrderWebhook(payload: WebhookPayload | undefined): Promise<void> {
     // TODO: implement order status update logic
-    console.info('Order webhook received:', JSON.stringify(payload?.data));
+    logger.info(`Order webhook received: ${JSON.stringify(payload?.data)}`);
 }
 
 router.post('/order', parseAndVerify, (req: Request, res: Response) => {
     // Acknowledge within 5s — heavy processing runs asynchronously
     res.status(200).json({ received: true });
     handleOrderWebhook(req.webhookPayload).catch(err => {
-        console.error('Order webhook processing error:', err);
+        logger.error('Order webhook processing error:', err);
     });
 });
 
