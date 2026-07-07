@@ -15,13 +15,13 @@ router.use('/health', health);
 router.use('/auth', auth);
 router.use('/webhooks', webhooks);
 
-// Versioned API
+// Versioned API (auth-gated, server-to-server)
 router.use('/api/v1', v1Router);
 
-// Customer and dealer routes
-router.use('/', dealers);
-router.use('/', customer);
-router.use('/', customers);
-router.use('/', partsBook);
+// Public v1 routes
+router.use('/v1', dealers);
+router.use('/v1', customer);
+router.use('/v1', customers);
+router.use('/v1', partsBook);
 
 export default router;
