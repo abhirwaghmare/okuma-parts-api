@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import bcClient from '../services/bigcommerce';
+import logger from '../config/logger';
 
 const router = Router();
 
@@ -28,6 +29,7 @@ interface BcCustomer {
     email: string;
     first_name: string;
     last_name: string;
+    company: string;
     customer_group_id: number | null;
     date_created: string | null;
     date_modified: string | null;
@@ -85,7 +87,7 @@ async function fetchRegisteredMachines(customerId: number): Promise<Machine[]> {
         try {
             raw = JSON.parse(field.value) as RawMachine[];
         } catch {
-            console.error(`dealer-customers: registered_machines for customer ${customerId} is not valid JSON`);
+            logger.error(`dealer-customers: registered_machines for customer ${customerId} is not valid JSON`);
             return [];
         }
 
@@ -100,7 +102,7 @@ async function fetchRegisteredMachines(customerId: number): Promise<Machine[]> {
                 status: m.status ?? null,
             }));
     } catch (err) {
-        console.error(`dealer-customers: metafield fetch failed for customer ${customerId}:`, (err as Error).message);
+        logger.error(`dealer-customers: metafield fetch failed for customer ${customerId}: ${(err as Error).message}`);
         return [];
     }
 }
@@ -127,9 +129,130 @@ async function batchedMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurr
     return results;
 }
 
+function buildDealerSummary(dealer: BcCustomer) {
+    return {
+        id: dealer.id,
+        firstName: dealer.first_name,
+        lastName: dealer.last_name,
+        email: dealer.email,
+        company: dealer.company || null,
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
+
+/**
+ * GET /api/dealers/context?email=<dealerEmail>
+ *
+ * Looks up a dealer by email address and returns their profile together with
+ * all registered customers.  Designed for the dealer sub-header: provides
+ * dealer identity and the full customer list in a single request.
+ *
+ * A dealer account is identified by having a `registered_customers` metafield
+ * (namespace: okuma, key: registered_customers) on their BC customer record.
+ *
+ * BC OOTB calls:
+ *   [1] GET /v3/customers?email=<email>                  → dealer customer record
+ *   [2] GET /v3/customers/:id/metafields?namespace=okuma&key=registered_customers
+ *   [3] GET /v3/customers?id:in=<customerIds>&limit=250  → customer profiles
+ *   [4] GET /v3/customers/:id/metafields ×N (batched 10) → registered machines
+ *   [5] GET /v2/customer_groups                          → group names (cached 5 min)
+ *
+ * Response:
+ * {
+ *   dealer:    { id, firstName, lastName, email, company },
+ *   customers: [{ id, email, firstName, lastName, customerGroup, dateCreated, dateModified, registeredMachines }]
+ * }
+ */
+router.get('/api/dealers/context', async (req, res) => {
+    const { email } = req.query;
+
+    if (!email || typeof email !== 'string' || !email.trim()) {
+        return res.status(400).json({ error: 'email query parameter is required.' });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        return res.status(400).json({ error: 'Invalid email format.' });
+    }
+
+    const emailNorm = email.trim().toLowerCase();
+
+    try {
+        // -- 1. Look up dealer by email --
+        const dealerLookup = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
+            params: { 'email:in': emailNorm },
+        });
+        const dealerRecord = dealerLookup.data?.data?.[0] ?? null;
+
+        if (!dealerRecord) {
+            return res.status(404).json({ error: 'No customer found for the supplied email.' });
+        }
+
+        const dealerId = dealerRecord.id;
+
+        // -- 2. Fetch registered_customers metafield — confirms dealer role --
+        const metaRes = await bcClient.get<{ data: Array<{ key: string; value: string }> }>(
+            `/v3/customers/${dealerId}/metafields`,
+            { params: { namespace: 'okuma', key: 'registered_customers' } }
+        );
+        const rcField = metaRes.data?.data?.[0] ?? null;
+
+        if (!rcField) {
+            return res.json({ dealer: buildDealerSummary(dealerRecord), customers: [] });
+        }
+
+        let customerIds: number[];
+        try {
+            customerIds = JSON.parse(rcField.value) as number[];
+        } catch {
+            logger.error(`dealer ${dealerId}: registered_customers metafield is not valid JSON`);
+            return res.json({ dealer: buildDealerSummary(dealerRecord), customers: [] });
+        }
+
+        if (!Array.isArray(customerIds) || customerIds.length === 0) {
+            return res.json({ dealer: buildDealerSummary(dealerRecord), customers: [] });
+        }
+
+        const validIds = customerIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 250);
+
+        // -- 3. Fetch customer profiles, machines (batched), and groups in parallel --
+        const [customersRes, machinesResults, groupMap] = await Promise.all([
+            bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
+                params: { 'id:in': validIds.join(','), limit: 250 },
+            }),
+            batchedMap(validIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
+            fetchCustomerGroupMap(),
+        ]);
+
+        const bcCustomers = customersRes.data?.data ?? [];
+
+        const machinesById: Record<number, Machine[]> = {};
+        machinesResults.forEach(({ id, machines }) => {
+            machinesById[id] = machines;
+        });
+
+        const customers = bcCustomers.map(c => ({
+            id: c.id,
+            email: c.email,
+            firstName: c.first_name,
+            lastName: c.last_name,
+            customerGroup: {
+                id: c.customer_group_id ?? null,
+                name: c.customer_group_id ? (groupMap[c.customer_group_id] ?? null) : null,
+            },
+            dateCreated: c.date_created ?? null,
+            dateModified: c.date_modified ?? null,
+            registeredMachines: machinesById[c.id] ?? [],
+        }));
+
+        return res.json({ dealer: buildDealerSummary(dealerRecord), customers });
+    } catch (err) {
+        logger.error(`dealer context lookup for ${emailNorm} failed: ${(err as Error).message}`);
+        return res.status(500).json({ error: 'Could not load dealer context.' });
+    }
+});
 
 /**
  * GET /api/dealers/:dealerId/customers
@@ -172,7 +295,7 @@ router.get('/api/dealers/:dealerId/customers', async (req, res) => {
         try {
             customerIds = JSON.parse(rcField.value) as number[];
         } catch {
-            console.error(`dealer ${dealerId}: registered_customers metafield is not valid JSON`);
+            logger.error(`dealer ${dealerId}: registered_customers metafield is not valid JSON`);
             return res.json({ dealerId: dealerIdNum, customers: [] });
         }
 
@@ -218,7 +341,7 @@ router.get('/api/dealers/:dealerId/customers', async (req, res) => {
 
         return res.json({ dealerId: dealerIdNum, customers });
     } catch (err) {
-        console.error(`dealer ${dealerId}: customer fetch failed:`, (err as Error).message);
+        logger.error(`dealer ${dealerId}: customer fetch failed: ${(err as Error).message}`);
         return res.status(500).json({ error: 'Could not load dealer customers.' });
     }
 });
