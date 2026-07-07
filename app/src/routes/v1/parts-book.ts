@@ -191,32 +191,6 @@ router.get('/parts-book/toc', async (_req: Request, res: Response, next: NextFun
     } catch (err) {
         return next(err);
     }
-
-    const rewritten = rewriteTocImagePaths(toc);
-
-    // When ?id is provided, scope to that single document only
-    const { id } = req.query;
-    const sourceDocuments = id ? rewritten.documents.filter(d => d.id === id) : rewritten.documents;
-
-    if (id && sourceDocuments.length === 0) {
-        return res.status(404).json({ error: `Document '${id}' not found.` });
-    }
-
-    const categoryIds = sourceDocuments.map(d => d.category_id).filter((id1): id1 is number => typeof id1 === 'number');
-
-    const categoryImages = await fetchCategoryImages([...new Set(categoryIds)]);
-
-    const documents = sourceDocuments.map(doc => ({
-        ...doc,
-        category_image: doc.category_id ? (categoryImages[doc.category_id] ?? '') : '',
-    }));
-
-    // When a single document was requested return it unwrapped for convenience
-    if (id) {
-        return res.json(documents[0]);
-    }
-
-    return res.json({ ...rewritten, documents });
 });
 
 router.get(
