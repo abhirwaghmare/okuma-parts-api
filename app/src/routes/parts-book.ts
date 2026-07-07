@@ -314,13 +314,12 @@ const PARENT_LABELS: Record<number, string> = {
     304: 'Machining Centers',
 };
 
-const PUB_NO_RE = /Pub\s+No\.\s*([A-Z]{2}\d{2}-\d{3}-[A-Z0-9]+)/i;
+const PUB_NO_RE = /Pub\s+No\.\s*([A-Z]{2}\d{2}-\d{3}-[A-Z0-9]+)/gi;
 
-function parsePubNo(description: string | undefined): string | null {
-    if (!description) return null;
+function parsePubNos(description: string | undefined): string[] {
+    if (!description) return [];
     const plain = description.replace(/<[^>]+>/g, ' ');
-    const m = plain.match(PUB_NO_RE);
-    return m ? m[1] : null;
+    return [...plain.matchAll(PUB_NO_RE)].map(m => m[1]);
 }
 
 interface MachineCategory {
@@ -328,8 +327,7 @@ interface MachineCategory {
     name: string;
     machineType: string | null;
     imageUrl: string;
-    pubNo?: string | null;
-    pubNos?: string[] | string | null;
+    pubNos: string[];
     _normalised: string;
 }
 
@@ -366,11 +364,11 @@ async function fetchMachineCategories(): Promise<MachineCategory[]> {
         name: cat.name,
         machineType: PARENT_LABELS[cat.parent_id] ?? null,
         imageUrl: cat.image_url ?? '',
-        pubNo: parsePubNo(cat.description),
+        pubNos: parsePubNos(cat.description),
         _normalised: cat.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
     }));
     _machineCategoryCachedAt = now;
-    return _machineCategoryCache;
+    return _machineCategoryCache as MachineCategory[];
 }
 
 /**
@@ -388,7 +386,7 @@ router.get('/api/machines', async (_req, res) => {
             name: cat.name,
             machineType: cat.machineType,
             imageUrl: cat.imageUrl,
-            pubNos: cat.pubNos ?? cat.pubNo ?? null,
+            pubNos: cat.pubNos,
         }));
         return res.json({ machines });
     } catch (err) {
@@ -431,16 +429,6 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
         return res.status(400).json({ error: 'Invalid customerId.' });
     }
 
-    const sessionCustomerId = (req.session as { customerId?: string | number }).customerId;
-
-    if (!sessionCustomerId) {
-        return res.status(401).json({ error: 'Authentication required.' });
-    }
-
-    if (String(sessionCustomerId) !== customerId) {
-        return res.status(403).json({ error: 'Forbidden.' });
-    }
-
     try {
         const [metaRes, categories] = await Promise.all([
             bcClient.get<{ data: Array<{ key: string; namespace: string; value: string }> }>(
@@ -468,8 +456,15 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
             return res.json({ machines: [] });
         }
 
+        const seenSerials = new Set<string>();
         const machines = rawMachines
             .filter(m => m.status !== 'Inactive')
+            .filter(m => {
+                const serial = m.serial ?? '';
+                if (!serial || seenSerials.has(serial)) return false;
+                seenSerials.add(serial);
+                return true;
+            })
             .map(m => {
                 const cat = matchCategory(m.model, categories);
                 return {
@@ -478,8 +473,8 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
                     installDate: m.install_date ?? null,
                     status: m.status ?? null,
                     imageUrl: cat ? cat.imageUrl : '',
-                    pubNo: cat ? cat.pubNo : null,
-                    hasPartsBook: !!(cat && cat.pubNo),
+                    pubNos: cat ? cat.pubNos : [],
+                    hasPartsBook: !!(cat && cat.pubNos.length),
                     machineType: cat ? cat.machineType : null,
                     categoryId: cat ? cat.categoryId : null,
                 };
