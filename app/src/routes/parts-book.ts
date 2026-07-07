@@ -431,16 +431,6 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
         return res.status(400).json({ error: 'Invalid customerId.' });
     }
 
-    const sessionCustomerId = (req.session as { customerId?: string | number }).customerId;
-
-    if (!sessionCustomerId) {
-        return res.status(401).json({ error: 'Authentication required.' });
-    }
-
-    if (String(sessionCustomerId) !== customerId) {
-        return res.status(403).json({ error: 'Forbidden.' });
-    }
-
     try {
         const [metaRes, categories] = await Promise.all([
             bcClient.get<{ data: Array<{ key: string; namespace: string; value: string }> }>(
