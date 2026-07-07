@@ -1,4 +1,5 @@
 import { createLogger, format, transports } from 'winston';
+import type { TransformableInfo } from 'logform';
 
 const env = process.env.NODE_ENV || 'development';
 
@@ -6,8 +7,8 @@ const devFormat = format.combine(
     format.colorize(),
     format.timestamp({ format: 'HH:mm:ss' }),
     format.errors({ stack: true }),
-    format.printf(({ level, message, timestamp, stack }: Record<string, unknown>) =>
-        stack ? `[${timestamp}] ${level}: ${message}\n${stack}` : `[${timestamp}] ${level}: ${message}`
+    format.printf(({ level, message, timestamp, stack }: TransformableInfo) =>
+        stack ? `[${timestamp}] ${level}: ${String(message)}\n${stack}` : `[${timestamp}] ${level}: ${String(message)}`
     )
 );
 
