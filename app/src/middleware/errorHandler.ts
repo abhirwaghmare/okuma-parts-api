@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import logger from '../config/logger';
 
 interface HttpError extends Error {
     status?: number;
@@ -10,7 +11,7 @@ function errorHandler(err: HttpError, _req: Request, res: Response, _next: NextF
     const message = status < 500 ? err.message : 'Internal server error';
 
     if (status >= 500) {
-        console.error('Unhandled error:', err);
+        logger.error('Unhandled error:', err);
     }
 
     res.status(status).json({ error: message });

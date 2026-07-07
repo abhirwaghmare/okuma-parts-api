@@ -1,7 +1,9 @@
 import axios from 'axios';
-import { Router } from 'express';
-import config from '../config';
-import bcClient from '../services/bigcommerce';
+import { Router, NextFunction, Request, Response } from 'express';
+import config from '../../config';
+import logger from '../../config/logger';
+import bcClient from '../../services/bigcommerce';
+import { AppError, NotFoundError } from '../../middleware/errors';
 
 const router = Router();
 
@@ -87,7 +89,7 @@ async function fetchDataJson<T>(relativePath: string): Promise<T | null> {
         if (axios.isAxiosError(err) && err.response?.status === 404) {
             return null;
         }
-        console.error(`parts-book: failed to fetch ${url}:`, (err as Error).message);
+        logger.error(`parts-book: failed to fetch ${url}: ${(err as Error).message}`);
         return null;
     }
 }
@@ -146,7 +148,7 @@ async function fetchCategoryImages(categoryIds: number[]): Promise<Record<number
         });
         return result;
     } catch (err) {
-        console.error('parts-book: category image lookup failed:', (err as Error).message);
+        logger.error(`parts-book: category image lookup failed: ${(err as Error).message}`);
         return {};
     }
 }
@@ -164,12 +166,30 @@ async function fetchCategoryImages(categoryIds: number[]): Promise<Record<number
  * With    ?id  — returns a single document entry matching that pdfId.
  *               Responds 404 when the id is not found.
  */
-router.get('/api/parts-book/toc', async (req, res) => {
-    const toc = await fetchDataJson<Toc>('toc.json');
+router.get('/parts-book/toc', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+        const toc = await fetchDataJson<Toc>('toc.json');
 
-    if (!toc) {
-        console.error('parts-book: toc.json not found at', config.partsBook.cdnBaseUrl);
-        return res.status(500).json({ error: 'Table of contents not available.' });
+        if (!toc) {
+            return next(new AppError('Table of contents not available.', 500));
+        }
+
+        const rewritten = rewriteTocImagePaths(toc);
+
+        const categoryIds = rewritten.documents
+            .map(d => d.category_id)
+            .filter((id): id is number => typeof id === 'number');
+
+        const categoryImages = await fetchCategoryImages([...new Set(categoryIds)]);
+
+        const documents = rewritten.documents.map(doc => ({
+            ...doc,
+            category_image: doc.category_id ? (categoryImages[doc.category_id] ?? '') : '',
+        }));
+
+        return res.json({ ...rewritten, documents });
+    } catch (err) {
+        return next(err);
     }
 
     const rewritten = rewriteTocImagePaths(toc);
@@ -199,107 +219,103 @@ router.get('/api/parts-book/toc', async (req, res) => {
     return res.json({ ...rewritten, documents });
 });
 
-router.get('/api/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts', async (req, res) => {
-    const { pdfId, assemblySlug, sheetSlug } = req.params;
-
-    const toc = await fetchDataJson<Toc>('toc.json');
-
-    if (!toc) {
-        console.error('parts-book: toc.json not found');
-        return res.status(500).json({ error: 'Table of contents not available.' });
-    }
-
-    const doc = toc.documents.find(d => d.id === pdfId);
-    if (!doc) {
-        return res.status(404).json({ error: `Document '${pdfId}' not found.` });
-    }
-
-    const assembly = doc.assemblies.find(a => a.slug === assemblySlug);
-    if (!assembly) {
-        return res.status(404).json({ error: `Assembly '${assemblySlug}' not found.` });
-    }
-
-    const sheet = assembly.sheets.find(s => s.slug === sheetSlug);
-    if (!sheet) {
-        return res.status(404).json({ error: `Sheet '${sheetSlug}' not found.` });
-    }
-
-    const partsData = await fetchDataJson<PartsData>(sheet.parts_json);
-
-    if (!partsData) {
-        console.error(`parts-book: parts.json not found at ${sheet.parts_json}`);
-        return res.status(500).json({ error: 'Parts data not available for this sheet.' });
-    }
-
-    const rawParts = partsData.parts ?? [];
-
-    const matchedSkus = [
-        ...new Set(rawParts.filter(p => p.has_table_match && p.part_no).map(p => p.part_no as string)),
-    ];
-
-    const bcLookup: Record<string, BcLookupEntry> = {};
-
-    if (matchedSkus.length > 0) {
+router.get(
+    '/parts-book/sheets/:pdfId/:assemblySlug/:sheetSlug/parts',
+    async (req: Request, res: Response, next: NextFunction) => {
         try {
-            const response = await bcClient.get<{ data: BcProduct[] }>('/v3/catalog/products', {
-                params: {
-                    'sku:in': matchedSkus.join(','),
-                    limit: 50,
-                    include_fields: 'id,sku,name,price,inventory_level,inventory_tracking,availability',
-                },
-            });
+            const { pdfId, assemblySlug, sheetSlug } = req.params;
 
-            const bcProducts = response.data?.data ?? [];
+            const toc = await fetchDataJson<Toc>('toc.json');
+            if (!toc) {
+                return next(new AppError('Table of contents not available.', 500));
+            }
 
-            bcProducts.forEach(product => {
-                const notTracked = product.inventory_tracking === 'none';
-                const inStock = product.availability === 'available' && (notTracked || product.inventory_level > 0);
+            const doc = toc.documents.find(d => d.id === pdfId);
+            if (!doc) {
+                return next(new NotFoundError(`Document '${pdfId}' not found.`));
+            }
 
-                bcLookup[product.sku] = {
-                    productId: product.id,
-                    price: product.price,
-                    inStock,
+            const assembly = doc.assemblies.find(a => a.slug === assemblySlug);
+            if (!assembly) {
+                return next(new NotFoundError(`Assembly '${assemblySlug}' not found.`));
+            }
+
+            const sheet = assembly.sheets.find(s => s.slug === sheetSlug);
+            if (!sheet) {
+                return next(new NotFoundError(`Sheet '${sheetSlug}' not found.`));
+            }
+
+            const partsData = await fetchDataJson<PartsData>(sheet.parts_json);
+            if (!partsData) {
+                return next(new AppError('Parts data not available for this sheet.', 500));
+            }
+
+            const rawParts = partsData.parts ?? [];
+
+            const matchedSkus = [
+                ...new Set(rawParts.filter(p => p.has_table_match && p.part_no).map(p => p.part_no as string)),
+            ];
+
+            const bcLookup: Record<string, BcLookupEntry> = {};
+
+            if (matchedSkus.length > 0) {
+                try {
+                    const response = await bcClient.get<{ data: BcProduct[] }>('/v3/catalog/products', {
+                        params: {
+                            'sku:in': matchedSkus.join(','),
+                            limit: 50,
+                            include_fields: 'id,sku,name,price,inventory_level,inventory_tracking,availability',
+                        },
+                    });
+
+                    (response.data?.data ?? []).forEach(product => {
+                        const notTracked = product.inventory_tracking === 'none';
+                        const inStock =
+                            product.availability === 'available' && (notTracked || product.inventory_level > 0);
+                        bcLookup[product.sku] = { productId: product.id, price: product.price, inStock };
+                    });
+                } catch (err) {
+                    logger.error(`parts-book: BC product lookup failed: ${(err as Error).message}`);
+                }
+            }
+
+            const parts = rawParts.map(p => {
+                const coords = p.callout_box_2d != null ? boxToPercent(p.callout_box_2d) : null;
+                const { calloutX = null, calloutY = null } = coords ?? {};
+                const bc = p.part_no ? (bcLookup[p.part_no] ?? null) : null;
+
+                return {
+                    calloutNumber: p.callout_number,
+                    sheetItem: p.sheet_item,
+                    partNo: p.part_no,
+                    description: p.description,
+                    unitNo: p.unit_no,
+                    qty: p.qty,
+                    calloutX,
+                    calloutY,
+                    price: bc ? bc.price : null,
+                    inStock: bc ? bc.inStock : false,
+                    productId: bc ? bc.productId : null,
+                    hasTableMatch: p.has_table_match === true,
                 };
             });
+
+            const cdnBase = config.partsBook.cdnBaseUrl;
+
+            return res.json({
+                sheet: {
+                    id: sheet.id,
+                    label: sheet.label,
+                    sheetNumber: sheet.sheet_number,
+                    diagramUrl: sheet.assembly_image ? `${cdnBase}/${sheet.assembly_image}` : null,
+                },
+                parts,
+            });
         } catch (err) {
-            console.error('parts-book: BC product lookup failed:', (err as Error).message);
+            return next(err);
         }
     }
-
-    const parts = rawParts.map(p => {
-        const coords = p.callout_box_2d != null ? boxToPercent(p.callout_box_2d) : null;
-        const { calloutX = null, calloutY = null } = coords ?? {};
-
-        const bc = p.part_no ? (bcLookup[p.part_no] ?? null) : null;
-
-        return {
-            calloutNumber: p.callout_number,
-            sheetItem: p.sheet_item,
-            partNo: p.part_no,
-            description: p.description,
-            unitNo: p.unit_no,
-            qty: p.qty,
-            calloutX,
-            calloutY,
-            price: bc ? bc.price : null,
-            inStock: bc ? bc.inStock : false,
-            productId: bc ? bc.productId : null,
-            hasTableMatch: p.has_table_match === true,
-        };
-    });
-
-    const cdnBase = config.partsBook.cdnBaseUrl;
-
-    return res.json({
-        sheet: {
-            id: sheet.id,
-            label: sheet.label,
-            sheetNumber: sheet.sheet_number,
-            diagramUrl: sheet.assembly_image ? `${cdnBase}/${sheet.assembly_image}` : null,
-        },
-        parts,
-    });
-});
+);
 
 // ---------------------------------------------------------------------------
 // Machines
@@ -322,6 +338,30 @@ function parsePubNo(description: string | undefined): string | null {
     const m = plain.match(PUB_NO_RE);
     return m ? m[1] : null;
 }
+
+router.get('/machines', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+        const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
+            params: {
+                'parent_id:in': MACHINE_PARENT_IDS.join(','),
+                limit: 250,
+                include_fields: 'id,name,image_url,parent_id,description',
+            },
+        });
+
+        const machines = (response.data?.data ?? []).map(cat => ({
+            categoryId: cat.id,
+            name: cat.name,
+            machineType: PARENT_LABELS[cat.parent_id] ?? null,
+            imageUrl: cat.image_url ?? '',
+            pubNo: parsePubNo(cat.description),
+        }));
+
+        return res.json({ machines });
+    } catch (err) {
+        return next(err);
+    }
+});
 
 interface MachineCategory {
     categoryId: number;
@@ -424,21 +464,11 @@ interface RawMachine {
     status?: string;
 }
 
-router.get('/api/customer/:customerId/machines', async (req, res) => {
-    const { customerId } = req.params;
+router.get('/customer/:customerId/machines', async (req: Request, res: Response, next: NextFunction) => {
+    const customerId = req.params.customerId as string;
 
     if (!customerId || !/^\d+$/.test(customerId)) {
-        return res.status(400).json({ error: 'Invalid customerId.' });
-    }
-
-    const sessionCustomerId = (req.session as { customerId?: string | number }).customerId;
-
-    if (!sessionCustomerId) {
-        return res.status(401).json({ error: 'Authentication required.' });
-    }
-
-    if (String(sessionCustomerId) !== customerId) {
-        return res.status(403).json({ error: 'Forbidden.' });
+        return next(new AppError('Invalid customerId.', 400));
     }
 
     try {
@@ -460,7 +490,7 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
         try {
             rawMachines = JSON.parse(rmField.value) as RawMachine[];
         } catch {
-            console.error(`customer ${customerId}: registered_machines metafield is not valid JSON`);
+            logger.error(`customer ${customerId}: registered_machines metafield is not valid JSON`);
             return res.json({ machines: [] });
         }
 
@@ -479,7 +509,6 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
                     status: m.status ?? null,
                     imageUrl: cat ? cat.imageUrl : '',
                     pubNo: cat ? cat.pubNo : null,
-                    hasPartsBook: !!(cat && cat.pubNo),
                     machineType: cat ? cat.machineType : null,
                     categoryId: cat ? cat.categoryId : null,
                 };
@@ -487,22 +516,21 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
 
         return res.json({ machines });
     } catch (err) {
-        console.error(`customer ${customerId}: machine lookup failed:`, (err as Error).message);
-        return res.status(500).json({ error: 'Could not load customer machines.' });
+        return next(err);
     }
 });
 
-router.get('/api/parts-book/machine/verify', (req, res) => {
+router.get('/parts-book/machine/verify', (req: Request, res: Response, next: NextFunction) => {
     const { serialNo } = req.query;
 
     if (!serialNo) {
-        return res.status(400).json({ error: 'serialNo query parameter is required.' });
+        return next(new AppError('serialNo query parameter is required.', 400));
     }
 
     return res.json({
         verified: true,
         model: 'LU300-M',
-        serialNo,
+        serialNo: String(serialNo),
         stockCondition: 'Active',
     });
 });

@@ -1,6 +1,8 @@
+import path from 'path';
 import dotenv from 'dotenv';
 
-dotenv.config();
+// Resolves to app/.env from both app/src/config/ (tsx dev) and app/dist/config/ (compiled)
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 interface BcConfig {
     clientId: string | undefined;
@@ -18,10 +20,14 @@ interface AppConfig {
     partsBook: {
         cdnBaseUrl: string | undefined;
     };
+    rateLimit: {
+        windowMs: number;
+        max: number;
+    };
 }
 
 const config: AppConfig = {
-    port: parseInt(process.env.PORT ?? '3001', 10),
+    port: parseInt(process.env.PORT || '3000', 10),
     sessionSecret: process.env.SESSION_SECRET,
     bc: {
         clientId: process.env.BC_CLIENT_ID,
@@ -33,6 +39,10 @@ const config: AppConfig = {
     },
     partsBook: {
         cdnBaseUrl: process.env.PARTS_BOOK_CDN_BASE_URL,
+    },
+    rateLimit: {
+        windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
+        max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
     },
 };
 
