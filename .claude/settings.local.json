@@ -11,10 +11,7 @@
       "Read(//c/Users/llal/Downloads/**)",
       "Bash(npm run *)",
       "Bash(npx eslint *)",
-      "Bash(echo \"EXIT:$?\")",
-      "Bash(curl -s --ssl-no-revoke 'https://api-b2b.bigcommerce.com/api/v3/io/users?email=karen.thomas.100320@acme-dummy.com&limit=2' -H 'x-auth-token: r9m2ewevrcm1l4i184cf5uwz6hx5mbs' -H 'x-store-hash: tb0nfpch8c' -H 'content-type: application/json')",
-      "Bash(curl -s --ssl-no-revoke 'https://api-b2b.bigcommerce.com/api/v3/io/users?companyId=13675066&limit=2' -H 'x-auth-token: r9m2ewevrcm1l4i184cf5uwz6hx5mbs' -H 'x-store-hash: tb0nfpch8c' -H 'content-type: application/json')",
-      "Bash(curl -s --ssl-no-revoke 'https://api-b2b.bigcommerce.com/api/v3/io/users?companyId=13675062&limit=2' -H 'x-auth-token: r9m2ewevrcm1l4i184cf5uwz6hx5mbs' -H 'x-store-hash: tb0nfpch8c' -H 'content-type: application/json')"
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }
