@@ -17,6 +17,7 @@ interface BcConfig {
 
 interface AppConfig {
     port: number;
+    trustProxy: boolean;
     sessionSecret: string | undefined;
     bc: BcConfig;
     partsBook: {
@@ -30,6 +31,7 @@ interface AppConfig {
 
 const config: AppConfig = {
     port: parseInt(process.env.PORT || '3000', 10),
+    trustProxy: process.env.TRUST_PROXY === 'true',
     sessionSecret: process.env.SESSION_SECRET,
     bc: {
         clientId: process.env.BC_CLIENT_ID,

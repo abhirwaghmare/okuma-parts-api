@@ -7,6 +7,7 @@ const router = Router();
 
 const GROUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes — groups change rarely
 const B2B_PAGE_LIMIT = 100;
+const BC_CUSTOMER_FILTER_LIMIT = 250;
 
 // ---------------------------------------------------------------------------
 // Types — BC
@@ -72,6 +73,12 @@ interface B2BPage<T> {
             limit?: number;
         };
     };
+}
+
+interface DealerCustomerResult {
+    customerIds: number[];
+    totalCustomerIds: number;
+    truncated: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,9 +187,9 @@ function buildDealerSummary(dealer: BcCustomer) {
  */
 async function collectPages<T>(fetcher: (off: number) => Promise<T[]>, pageOffset = 0, acc: T[] = []): Promise<T[]> {
     const page = await fetcher(pageOffset);
-    const collected = [...acc, ...page];
-    if (page.length < B2B_PAGE_LIMIT) return collected;
-    return collectPages(fetcher, pageOffset + B2B_PAGE_LIMIT, collected);
+    acc.push(...page);
+    if (page.length < B2B_PAGE_LIMIT) return acc;
+    return collectPages(fetcher, pageOffset + B2B_PAGE_LIMIT, acc);
 }
 
 /**
@@ -241,7 +248,7 @@ async function fetchB2BCompanyUsers(companyId: number): Promise<B2BCompanyUser[]
             return res.data?.data ?? [];
         } catch (err) {
             logger.error(`B2B users fetch for company ${companyId} failed: ${(err as Error).message}`);
-            return [];
+            throw err;
         }
     });
 }
@@ -253,16 +260,15 @@ async function fetchB2BCompanyUsers(companyId: number): Promise<B2BCompanyUser[]
  * walks all direct subsidiaries (as shown in the Hierarchy tab in the BC portal),
  * and collects the BC customer IDs of every user within those subsidiaries.
  *
- * Returns an empty array when:
+ * Returns no customer IDs when:
  *  - no B2B user matches the email
  *  - the company has no subsidiaries
- *  - all subsidiary-user fetches fail
  */
-async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<number[]> {
+async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<DealerCustomerResult> {
     const dealerCompanyId = await fetchB2BCompanyIdByEmail(dealerEmail);
     if (!dealerCompanyId) {
         logger.warn(`dealer-hierarchy: no B2B company found for email ${dealerEmail}`);
-        return [];
+        return { customerIds: [], totalCustomerIds: 0, truncated: false };
     }
 
     logger.info(`dealer-hierarchy: resolved B2B company ${dealerCompanyId} for ${dealerEmail}`);
@@ -270,7 +276,7 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<numbe
     const subsidiaries = await fetchB2BSubsidiaries(dealerCompanyId);
     if (subsidiaries.length === 0) {
         logger.warn(`dealer-hierarchy: company ${dealerCompanyId} has no subsidiaries`);
-        return [];
+        return { customerIds: [], totalCustomerIds: 0, truncated: false };
     }
 
     logger.info(`dealer-hierarchy: found ${subsidiaries.length} subsidiaries under company ${dealerCompanyId}`);
@@ -289,8 +295,21 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<numbe
             return acc;
         }, [] as number[]);
 
-    logger.info(`dealer-hierarchy: collected ${customerIds.length} unique customer IDs`);
-    return customerIds;
+    const validCustomerIds = customerIds.filter(id => Number.isInteger(id) && id > 0);
+    const totalCustomerIds = validCustomerIds.length;
+    const truncated = totalCustomerIds > BC_CUSTOMER_FILTER_LIMIT;
+
+    if (truncated) {
+        logger.warn(`dealer-hierarchy: truncated customer IDs from ${totalCustomerIds} to ${BC_CUSTOMER_FILTER_LIMIT}`);
+    }
+
+    logger.info(`dealer-hierarchy: collected ${totalCustomerIds} unique customer IDs`);
+
+    return {
+        customerIds: validCustomerIds.slice(0, BC_CUSTOMER_FILTER_LIMIT),
+        totalCustomerIds,
+        truncated,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -304,12 +323,12 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<numbe
  * all customers found under their subsidiaries in the B2B hierarchy.
  *
  * B2B hierarchy calls:
- *   [1] GET /api/v3/io/companies?email=<email>             → dealer's B2B company
- *   [2] GET /api/v3/io/companies?parentCompanyId=<id>      → subsidiaries (paginated)
- *   [3] GET /api/v3/io/companies/<id>/users (×subsidiaries) → BC customer IDs
+ *   [1] GET /api/v3/io/users?email=<email>                  → dealer's B2B companyId
+ *   [2] GET /api/v3/io/companies (paginated)               → subsidiaries filtered by parentCompany.id
+ *   [3] GET /api/v3/io/users?companyId=<id> (paginated)    → BC customer IDs
  *
  * BC OOTB calls:
- *   [4] GET /v3/customers?email=<email>                    → dealer customer record
+ *   [4] GET /v3/customers?email:in=<email>&limit=1         → dealer customer record
  *   [5] GET /v3/customers?id:in=<customerIds>&limit=250    → customer profiles
  *   [6] GET /v3/customers/:id/metafields ×N (batched 10)   → registered machines
  *   [7] GET /v2/customer_groups                            → group names (cached 5 min)
@@ -317,7 +336,8 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<numbe
  * Response:
  * {
  *   dealer:    { id, firstName, lastName, email, company },
- *   customers: [{ id, email, firstName, lastName, customerGroup, dateCreated, dateModified, registeredMachines }]
+ *   customers: [{ id, email, firstName, lastName, customerGroup, dateCreated, dateModified, registeredMachines }],
+ *   meta:      { totalCustomerIds, returnedCustomerIds, truncated }
  * }
  */
 router.get('/dealers/context', async (req, res) => {
@@ -336,7 +356,7 @@ router.get('/dealers/context', async (req, res) => {
     try {
         // -- 1. Look up dealer BC record (identity only — not for customer list) --
         const dealerLookup = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-            params: { 'email:in': emailNorm },
+            params: { 'email:in': emailNorm, limit: 1 },
         });
         const dealerRecord = dealerLookup.data?.data?.[0] ?? null;
 
@@ -345,20 +365,22 @@ router.get('/dealers/context', async (req, res) => {
         }
 
         // -- 2. Resolve customer IDs from B2B hierarchy --
-        const customerIds = await fetchCustomerIdsFromHierarchy(emailNorm);
+        const { customerIds, totalCustomerIds, truncated } = await fetchCustomerIdsFromHierarchy(emailNorm);
 
         if (customerIds.length === 0) {
-            return res.json({ dealer: buildDealerSummary(dealerRecord), customers: [] });
+            return res.json({
+                dealer: buildDealerSummary(dealerRecord),
+                customers: [],
+                meta: { totalCustomerIds, returnedCustomerIds: 0, truncated },
+            });
         }
-
-        const validIds = customerIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 250);
 
         // -- 3. Enrich: customer profiles, machines (batched), and groups in parallel --
         const [customersRes, machinesResults, groupMap] = await Promise.all([
             bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-                params: { 'id:in': validIds.join(','), limit: 250 },
+                params: { 'id:in': customerIds.join(','), limit: BC_CUSTOMER_FILTER_LIMIT },
             }),
-            batchedMap(validIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
+            batchedMap(customerIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
             fetchCustomerGroupMap(),
         ]);
 
@@ -383,7 +405,11 @@ router.get('/dealers/context', async (req, res) => {
             registeredMachines: machinesById[c.id] ?? [],
         }));
 
-        return res.json({ dealer: buildDealerSummary(dealerRecord), customers });
+        return res.json({
+            dealer: buildDealerSummary(dealerRecord),
+            customers,
+            meta: { totalCustomerIds, returnedCustomerIds: customerIds.length, truncated },
+        });
     } catch (err) {
         logger.error(`dealer context lookup for ${emailNorm} failed: ${(err as Error).message}`);
         return res.status(500).json({ error: 'Could not load dealer context.' });
@@ -396,13 +422,22 @@ router.get('/dealers/context', async (req, res) => {
  * Returns all customers under a dealer's B2B hierarchy subsidiaries, enriched
  * with basic identity, customer group, and registered machines.
  *
- * B2B hierarchy calls (same as /context — see above).
- * BC OOTB calls (same as /context — see above).
+ * B2B hierarchy calls:
+ *   [1] GET /api/v3/io/users?email=<email>                        → dealer's B2B user → companyId
+ *   [2] GET /api/v3/io/companies (all pages, filtered client-side on parentCompany.id) → subsidiaries
+ *   [3] GET /api/v3/io/users?companyId=<id> ×subsidiaries (batched 5) → BC customer IDs
+ *
+ * BC OOTB calls:
+ *   [4] GET /v3/customers?id:in=<dealerId>                        → dealer customer record (for email)
+ *   [5] GET /v3/customers?id:in=<customerIds>&limit=250           → customer profiles
+ *   [6] GET /v3/customers/:id/metafields ×N (batched 10)          → registered machines
+ *   [7] GET /v2/customer_groups                                    → group names (cached 5 min)
  *
  * Response:
  * {
  *   dealerId:  number,
- *   customers: [{ id, email, firstName, lastName, customerGroup, dateCreated, dateModified, registeredMachines }]
+ *   customers: [{ id, email, firstName, lastName, customerGroup, dateCreated, dateModified, registeredMachines }],
+ *   meta:      { totalCustomerIds, returnedCustomerIds, truncated }
  * }
  */
 router.get('/dealers/:dealerId/customers', async (req, res) => {
@@ -426,20 +461,22 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
         }
 
         // -- 2. Resolve customer IDs from B2B hierarchy --
-        const customerIds = await fetchCustomerIdsFromHierarchy(dealerRecord.email);
+        const { customerIds, totalCustomerIds, truncated } = await fetchCustomerIdsFromHierarchy(dealerRecord.email);
 
         if (customerIds.length === 0) {
-            return res.json({ dealerId: dealerIdNum, customers: [] });
+            return res.json({
+                dealerId: dealerIdNum,
+                customers: [],
+                meta: { totalCustomerIds, returnedCustomerIds: 0, truncated },
+            });
         }
-
-        const validIds = customerIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 250);
 
         // -- 3. Enrich: customer profiles, machines (batched), and groups in parallel --
         const [customersRes, machinesResults, groupMap] = await Promise.all([
             bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-                params: { 'id:in': validIds.join(','), limit: 250 },
+                params: { 'id:in': customerIds.join(','), limit: BC_CUSTOMER_FILTER_LIMIT },
             }),
-            batchedMap(validIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
+            batchedMap(customerIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
             fetchCustomerGroupMap(),
         ]);
 
@@ -464,7 +501,11 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
             registeredMachines: machinesById[c.id] ?? [],
         }));
 
-        return res.json({ dealerId: dealerIdNum, customers });
+        return res.json({
+            dealerId: dealerIdNum,
+            customers,
+            meta: { totalCustomerIds, returnedCustomerIds: customerIds.length, truncated },
+        });
     } catch (err) {
         logger.error(`dealer ${dealerId}: customer fetch failed: ${(err as Error).message}`);
         return res.status(500).json({ error: 'Could not load dealer customers.' });
