@@ -18,6 +18,7 @@ const apiLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' },
+    validate: { xForwardedForHeader: false },
 });
 router.use(apiLimiter);
 router.use(authenticateBCToken);

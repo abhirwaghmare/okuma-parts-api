@@ -9,7 +9,7 @@ import errorHandler from './middleware/errorHandler';
 
 const app = express();
 
-app.set('trust proxy', 1);
+// if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
 app.use(helmet());
 app.use(morgan('dev'));
 
