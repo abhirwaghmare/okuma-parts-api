@@ -221,7 +221,7 @@ async function fetchB2BSubsidiaries(dealerCompanyId: number): Promise<B2BCompany
             return res.data?.data ?? [];
         } catch (err) {
             logger.error(`B2B companies fetch failed: ${(err as Error).message}`);
-            return [];
+            throw err;
         }
     });
     return all.filter(c => c.parentCompany?.id === dealerCompanyId);
