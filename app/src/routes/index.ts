@@ -6,7 +6,6 @@ import health from './health';
 import auth from './auth';
 import webhooks from './webhooks';
 import v1Router from './v1';
-import dealers from './dealers';
 import customer from './customer';
 import customers from './customers';
 import partsBook from './parts-book';
@@ -31,7 +30,7 @@ router.use('/webhooks', webhooks);
 router.use('/api/v1', v1Router);
 
 // Public v1 routes
-router.use('/v1', dealers);
+// dealers moved to /api/v1 via v1Router
 router.use('/v1', customer);
 router.use('/v1', customers);
 router.use('/v1', partsBook);

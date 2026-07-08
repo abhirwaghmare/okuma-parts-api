@@ -166,7 +166,7 @@ function buildDealerSummary(dealer: BcCustomer) {
  *   customers: [{ id, email, firstName, lastName, customerGroup, dateCreated, dateModified, registeredMachines }]
  * }
  */
-router.get('/api/dealers/context', async (req, res) => {
+router.get('/dealers/context', async (req, res) => {
     const { email } = req.query;
 
     if (!email || typeof email !== 'string' || !email.trim()) {
@@ -270,7 +270,7 @@ router.get('/api/dealers/context', async (req, res) => {
  *   [3] GET /v3/customers/:id/metafields (×N, batched 10 at a time) → registered machines
  *   [4] GET /v2/customer_groups                        → group names (cached 5 min)
  */
-router.get('/api/dealers/:dealerId/customers', async (req, res) => {
+router.get('/dealers/:dealerId/customers', async (req, res) => {
     const { dealerId } = req.params;
 
     if (!dealerId || !/^\d+$/.test(dealerId)) {
