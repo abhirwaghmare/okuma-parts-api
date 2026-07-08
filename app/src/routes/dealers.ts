@@ -241,7 +241,7 @@ async function fetchB2BCompanyUsers(companyId: number): Promise<B2BCompanyUser[]
             return res.data?.data ?? [];
         } catch (err) {
             logger.error(`B2B users fetch for company ${companyId} failed: ${(err as Error).message}`);
-            return [];
+            throw err;
         }
     });
 }
