@@ -180,9 +180,9 @@ function buildDealerSummary(dealer: BcCustomer) {
  */
 async function collectPages<T>(fetcher: (off: number) => Promise<T[]>, pageOffset = 0, acc: T[] = []): Promise<T[]> {
     const page = await fetcher(pageOffset);
-    const collected = [...acc, ...page];
-    if (page.length < B2B_PAGE_LIMIT) return collected;
-    return collectPages(fetcher, pageOffset + B2B_PAGE_LIMIT, collected);
+    acc.push(...page);
+    if (page.length < B2B_PAGE_LIMIT) return acc;
+    return collectPages(fetcher, pageOffset + B2B_PAGE_LIMIT, acc);
 }
 
 /**
