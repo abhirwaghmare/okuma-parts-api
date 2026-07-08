@@ -8,9 +8,11 @@ interface BcConfig {
     clientId: string | undefined;
     clientSecret: string | undefined;
     accessToken: string | undefined;
+    b2bAuthToken: string | undefined;
     storeHash: string | undefined;
     appCallbackUrl: string | undefined;
     apiBaseUrl: string;
+    b2bApiBaseUrl: string;
 }
 
 interface AppConfig {
@@ -33,9 +35,11 @@ const config: AppConfig = {
         clientId: process.env.BC_CLIENT_ID,
         clientSecret: process.env.BC_CLIENT_SECRET,
         accessToken: process.env.BC_ACCESS_TOKEN,
+        b2bAuthToken: process.env.B2B_AUTH_TOKEN ?? process.env.BC_ACCESS_TOKEN,
         storeHash: process.env.BC_STORE_HASH,
         appCallbackUrl: process.env.BC_APP_CALLBACK_URL,
         apiBaseUrl: `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}`,
+        b2bApiBaseUrl: 'https://api-b2b.bigcommerce.com',
     },
     partsBook: {
         cdnBaseUrl: process.env.PARTS_BOOK_CDN_BASE_URL,

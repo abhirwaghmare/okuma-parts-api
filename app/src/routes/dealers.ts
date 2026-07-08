@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import bcClient from '../services/bigcommerce';
+import b2bClient from '../services/b2b';
 import logger from '../config/logger';
 
 const router = Router();
 
 const GROUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes — groups change rarely
+const B2B_PAGE_LIMIT = 100;
 
 // ---------------------------------------------------------------------------
-// Types
+// Types — BC
 // ---------------------------------------------------------------------------
 
 interface RawMachine {
@@ -41,7 +43,39 @@ interface BcCustomerGroup {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Types — B2B Edition hierarchy
+// ---------------------------------------------------------------------------
+
+interface B2BCompany {
+    companyId: number;
+    companyName: string;
+    companyEmail: string;
+    parentCompany: {
+        id: number | null;
+        name: string;
+    };
+}
+
+interface B2BCompanyUser {
+    id: number;
+    email: string;
+    customerId: number; // BC customer ID
+    companyId: number;
+}
+
+interface B2BPage<T> {
+    data: T[];
+    meta?: {
+        pagination?: {
+            totalCount?: number;
+            offset?: number;
+            limit?: number;
+        };
+    };
+}
+
+// ---------------------------------------------------------------------------
+// BC Helpers
 // ---------------------------------------------------------------------------
 
 let groupCache: Record<number, string> | null = null;
@@ -50,7 +84,6 @@ let groupCacheAt = 0;
 /**
  * Fetch all BC customer groups and return a map of id → name.
  * Cached for 5 minutes.
- * BC OOTB: GET /v2/customer_groups
  */
 async function fetchCustomerGroupMap(): Promise<Record<number, string>> {
     const now = Date.now();
@@ -71,7 +104,6 @@ async function fetchCustomerGroupMap(): Promise<Record<number, string>> {
 
 /**
  * Fetch the registered_machines metafield for one customer.
- * BC OOTB: GET /v3/customers/:id/metafields?namespace=okuma&key=registered_machines
  * Returns [] on missing metafield, invalid JSON, or API failure.
  */
 async function fetchRegisteredMachines(customerId: number): Promise<Machine[]> {
@@ -109,7 +141,6 @@ async function fetchRegisteredMachines(customerId: number): Promise<Machine[]> {
 
 /**
  * Run an async fn over items with at most `concurrency` in-flight at once.
- * Prevents rate-limit issues when a dealer has a large customer list.
  */
 async function batchedMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurrency: number): Promise<R[]> {
     const results: R[] = new Array(items.length);
@@ -140,25 +171,148 @@ function buildDealerSummary(dealer: BcCustomer) {
 }
 
 // ---------------------------------------------------------------------------
+// B2B Hierarchy Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively collects all pages from a paginated B2B endpoint.
+ * Uses recursion instead of a loop to satisfy the no-restricted-syntax rule.
+ */
+async function collectPages<T>(fetcher: (off: number) => Promise<T[]>, pageOffset = 0, acc: T[] = []): Promise<T[]> {
+    const page = await fetcher(pageOffset);
+    const collected = [...acc, ...page];
+    if (page.length < B2B_PAGE_LIMIT) return collected;
+    return collectPages(fetcher, pageOffset + B2B_PAGE_LIMIT, collected);
+}
+
+/**
+ * Find the dealer's B2B company ID by looking up the admin user via their email.
+ *
+ * B2B API: GET /api/v3/io/users?email={email}
+ * The returned user object contains `companyId` which is the dealer's B2B company.
+ */
+async function fetchB2BCompanyIdByEmail(email: string): Promise<number | null> {
+    try {
+        const res = await b2bClient.get<B2BPage<B2BCompanyUser>>('/api/v3/io/users', {
+            params: { email, limit: 1 },
+        });
+        const user = res.data?.data?.[0] ?? null;
+        return user ? user.companyId : null;
+    } catch (err) {
+        logger.error(`B2B user lookup by email ${email} failed: ${(err as Error).message}`);
+        return null;
+    }
+}
+
+/**
+ * Fetch all direct subsidiaries of a B2B company.
+ *
+ * The B2B API does not support server-side parent filtering, so all companies
+ * are fetched (paginated) and filtered client-side on parentCompany.id.
+ *
+ * B2B API: GET /api/v3/io/companies (paginated)
+ */
+async function fetchB2BSubsidiaries(dealerCompanyId: number): Promise<B2BCompany[]> {
+    const all = await collectPages(async off => {
+        try {
+            const res = await b2bClient.get<B2BPage<B2BCompany>>('/api/v3/io/companies', {
+                params: { limit: B2B_PAGE_LIMIT, offset: off },
+            });
+            return res.data?.data ?? [];
+        } catch (err) {
+            logger.error(`B2B companies fetch failed: ${(err as Error).message}`);
+            return [];
+        }
+    });
+    return all.filter(c => c.parentCompany?.id === dealerCompanyId);
+}
+
+/**
+ * Fetch all B2B users (and their BC customer IDs) for a given company (all pages).
+ *
+ * B2B API: GET /api/v3/io/users?companyId={companyId}
+ */
+async function fetchB2BCompanyUsers(companyId: number): Promise<B2BCompanyUser[]> {
+    return collectPages(async off => {
+        try {
+            const res = await b2bClient.get<B2BPage<B2BCompanyUser>>('/api/v3/io/users', {
+                params: { companyId, limit: B2B_PAGE_LIMIT, offset: off },
+            });
+            return res.data?.data ?? [];
+        } catch (err) {
+            logger.error(`B2B users fetch for company ${companyId} failed: ${(err as Error).message}`);
+            return [];
+        }
+    });
+}
+
+/**
+ * Core hierarchy resolver.
+ *
+ * Given a dealer's email, finds their B2B company via the users endpoint,
+ * walks all direct subsidiaries (as shown in the Hierarchy tab in the BC portal),
+ * and collects the BC customer IDs of every user within those subsidiaries.
+ *
+ * Returns an empty array when:
+ *  - no B2B user matches the email
+ *  - the company has no subsidiaries
+ *  - all subsidiary-user fetches fail
+ */
+async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<number[]> {
+    const dealerCompanyId = await fetchB2BCompanyIdByEmail(dealerEmail);
+    if (!dealerCompanyId) {
+        logger.warn(`dealer-hierarchy: no B2B company found for email ${dealerEmail}`);
+        return [];
+    }
+
+    logger.info(`dealer-hierarchy: resolved B2B company ${dealerCompanyId} for ${dealerEmail}`);
+
+    const subsidiaries = await fetchB2BSubsidiaries(dealerCompanyId);
+    if (subsidiaries.length === 0) {
+        logger.warn(`dealer-hierarchy: company ${dealerCompanyId} has no subsidiaries`);
+        return [];
+    }
+
+    logger.info(`dealer-hierarchy: found ${subsidiaries.length} subsidiaries under company ${dealerCompanyId}`);
+
+    const userArrays = await batchedMap(subsidiaries, sub => fetchB2BCompanyUsers(sub.companyId), 5);
+
+    const seen = new Set<number>();
+    const customerIds: number[] = userArrays
+        .flat()
+        .filter(user => user.customerId > 0)
+        .reduce((acc, user) => {
+            if (!seen.has(user.customerId)) {
+                seen.add(user.customerId);
+                acc.push(user.customerId);
+            }
+            return acc;
+        }, [] as number[]);
+
+    logger.info(`dealer-hierarchy: collected ${customerIds.length} unique customer IDs`);
+    return customerIds;
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 /**
- * GET /api/dealers/context?email=<dealerEmail>
+ * GET /api/v1/dealers/context?email=<dealerEmail>
  *
  * Looks up a dealer by email address and returns their profile together with
- * all registered customers.  Designed for the dealer sub-header: provides
- * dealer identity and the full customer list in a single request.
+ * all customers found under their subsidiaries in the B2B hierarchy.
  *
- * A dealer account is identified by having a `registered_customers` metafield
- * (namespace: okuma, key: registered_customers) on their BC customer record.
+ * B2B hierarchy calls:
+ *   [1] GET /api/v3/io/companies?email=<email>             → dealer's B2B company
+ *   [2] GET /api/v3/io/companies?parentCompanyId=<id>      → subsidiaries (paginated)
+ *   [3] GET /api/v3/io/companies/<id>/users (×subsidiaries) → BC customer IDs
  *
  * BC OOTB calls:
- *   [1] GET /v3/customers?email=<email>                  → dealer customer record
- *   [2] GET /v3/customers/:id/metafields?namespace=okuma&key=registered_customers
- *   [3] GET /v3/customers?id:in=<customerIds>&limit=250  → customer profiles
- *   [4] GET /v3/customers/:id/metafields ×N (batched 10) → registered machines
- *   [5] GET /v2/customer_groups                          → group names (cached 5 min)
+ *   [4] GET /v3/customers?email=<email>                    → dealer customer record
+ *   [5] GET /v3/customers?id:in=<customerIds>&limit=250    → customer profiles
+ *   [6] GET /v3/customers/:id/metafields ×N (batched 10)   → registered machines
+ *   [7] GET /v2/customer_groups                            → group names (cached 5 min)
  *
  * Response:
  * {
@@ -180,7 +334,7 @@ router.get('/dealers/context', async (req, res) => {
     const emailNorm = email.trim().toLowerCase();
 
     try {
-        // -- 1. Look up dealer by email --
+        // -- 1. Look up dealer BC record (identity only — not for customer list) --
         const dealerLookup = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
             params: { 'email:in': emailNorm },
         });
@@ -190,34 +344,16 @@ router.get('/dealers/context', async (req, res) => {
             return res.status(404).json({ error: 'No customer found for the supplied email.' });
         }
 
-        const dealerId = dealerRecord.id;
+        // -- 2. Resolve customer IDs from B2B hierarchy --
+        const customerIds = await fetchCustomerIdsFromHierarchy(emailNorm);
 
-        // -- 2. Fetch registered_customers metafield — confirms dealer role --
-        const metaRes = await bcClient.get<{ data: Array<{ key: string; value: string }> }>(
-            `/v3/customers/${dealerId}/metafields`,
-            { params: { namespace: 'okuma', key: 'registered_customers' } }
-        );
-        const rcField = metaRes.data?.data?.[0] ?? null;
-
-        if (!rcField) {
-            return res.json({ dealer: buildDealerSummary(dealerRecord), customers: [] });
-        }
-
-        let customerIds: number[];
-        try {
-            customerIds = JSON.parse(rcField.value) as number[];
-        } catch {
-            logger.error(`dealer ${dealerId}: registered_customers metafield is not valid JSON`);
-            return res.json({ dealer: buildDealerSummary(dealerRecord), customers: [] });
-        }
-
-        if (!Array.isArray(customerIds) || customerIds.length === 0) {
+        if (customerIds.length === 0) {
             return res.json({ dealer: buildDealerSummary(dealerRecord), customers: [] });
         }
 
         const validIds = customerIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 250);
 
-        // -- 3. Fetch customer profiles, machines (batched), and groups in parallel --
+        // -- 3. Enrich: customer profiles, machines (batched), and groups in parallel --
         const [customersRes, machinesResults, groupMap] = await Promise.all([
             bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
                 params: { 'id:in': validIds.join(','), limit: 250 },
@@ -255,20 +391,19 @@ router.get('/dealers/context', async (req, res) => {
 });
 
 /**
- * GET /api/dealers/:dealerId/customers
+ * GET /api/v1/dealers/:dealerId/customers
  *
- * Returns all registered customers under a dealer / distributor, enriched
- * with basic identity, account status, customer group, and registered machines.
+ * Returns all customers under a dealer's B2B hierarchy subsidiaries, enriched
+ * with basic identity, customer group, and registered machines.
  *
- * Dealer-customer relationship: the dealer customer record stores a
- * `registered_customers` metafield (namespace: okuma, key: registered_customers)
- * as a JSON array of BC customer IDs.
+ * B2B hierarchy calls (same as /context — see above).
+ * BC OOTB calls (same as /context — see above).
  *
- * BC OOTB calls:
- *   [1] GET /v3/customers/:dealerId/metafields?namespace=okuma&key=registered_customers
- *   [2] GET /v3/customers?id:in=...                    → customer records (parallel with 3+4)
- *   [3] GET /v3/customers/:id/metafields (×N, batched 10 at a time) → registered machines
- *   [4] GET /v2/customer_groups                        → group names (cached 5 min)
+ * Response:
+ * {
+ *   dealerId:  number,
+ *   customers: [{ id, email, firstName, lastName, customerGroup, dateCreated, dateModified, registeredMachines }]
+ * }
  */
 router.get('/dealers/:dealerId/customers', async (req, res) => {
     const { dealerId } = req.params;
@@ -280,39 +415,29 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
     const dealerIdNum = Number(dealerId);
 
     try {
-        // -- 1. Fetch dealer's registered_customers metafield (server-side filtered) --
-        const metaRes = await bcClient.get<{ data: Array<{ key: string; value: string }> }>(
-            `/v3/customers/${dealerId}/metafields`,
-            { params: { namespace: 'okuma', key: 'registered_customers' } }
-        );
-        const rcField = metaRes.data?.data?.[0] ?? null;
+        // -- 1. Fetch dealer BC record to get email (needed for B2B lookup) --
+        const dealerRes = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
+            params: { 'id:in': dealerId },
+        });
+        const dealerRecord = dealerRes.data?.data?.[0] ?? null;
 
-        if (!rcField) {
+        if (!dealerRecord) {
+            return res.status(404).json({ error: 'Dealer not found.' });
+        }
+
+        // -- 2. Resolve customer IDs from B2B hierarchy --
+        const customerIds = await fetchCustomerIdsFromHierarchy(dealerRecord.email);
+
+        if (customerIds.length === 0) {
             return res.json({ dealerId: dealerIdNum, customers: [] });
         }
 
-        let customerIds: number[];
-        try {
-            customerIds = JSON.parse(rcField.value) as number[];
-        } catch {
-            logger.error(`dealer ${dealerId}: registered_customers metafield is not valid JSON`);
-            return res.json({ dealerId: dealerIdNum, customers: [] });
-        }
-
-        if (!Array.isArray(customerIds) || customerIds.length === 0) {
-            return res.json({ dealerId: dealerIdNum, customers: [] });
-        }
-
-        // BC id:in accepts up to 250 IDs per request
         const validIds = customerIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 250);
 
-        // -- 2. Batch-fetch customer records, machines (batched), and groups in parallel --
+        // -- 3. Enrich: customer profiles, machines (batched), and groups in parallel --
         const [customersRes, machinesResults, groupMap] = await Promise.all([
             bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-                params: {
-                    'id:in': validIds.join(','),
-                    limit: 250,
-                },
+                params: { 'id:in': validIds.join(','), limit: 250 },
             }),
             batchedMap(validIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
             fetchCustomerGroupMap(),
