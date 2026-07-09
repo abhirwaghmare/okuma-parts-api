@@ -5,10 +5,11 @@ import logger from '../config/logger';
 const b2bClient = axios.create({
     baseURL: config.bc.b2bApiBaseUrl,
     headers: {
-        'x-auth-token': config.bc.b2bAuthToken,
-        'x-store-hash': config.bc.storeHash,
-        'content-type': 'application/json',
-    },
+        'X-Auth-Token': config.bc.b2bAuthToken,
+        'X-Store-Hash': config.bc.storeHash,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+    }
     timeout: 15000,
 });
 
