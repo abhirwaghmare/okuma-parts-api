@@ -295,7 +295,7 @@ Path pattern: `theme/assets/img/parts-book/lu300m/{assembly_slug}/{sheet_slug}/a
 **Mounted at:** `app/src/routes/v1/index.ts` → `/parts-book`  
 **Auth:** All endpoints require `req.session.customerId` — return `401` if missing.
 
-### GET /api/v1/parts-book/catalog
+### GET /v1/api/parts-book/catalog
 
 Returns the books/groups/sheets hierarchy from the static JSON (no parts detail).
 
@@ -312,7 +312,7 @@ Returns the books/groups/sheets hierarchy from the static JSON (no parts detail)
 }
 ```
 
-### GET /api/v1/parts-book/sheets/:sheetId/parts
+### GET /v1/api/parts-book/sheets/:sheetId/parts
 
 - Reads parts array from `lu300m.json` for the given `sheetId`
 - Extracts all `partNo` values from the sheet
@@ -350,7 +350,7 @@ Returns the books/groups/sheets hierarchy from the static JSON (no parts detail)
 
 **Parts without a matching BC product** are included with `price: null` and `inStock: false` — they display in the table without commerce actions.
 
-### GET /api/v1/parts-book/machine/verify
+### GET /v1/api/parts-book/machine/verify
 
 **Query:** `?serialNo=...`  
 **Status:** Stub — returns hardcoded verified response. Replace with third-party API when details are confirmed.
@@ -388,7 +388,7 @@ Key points:
 - `{{#unless customer}}` redirect to login
 - Breadcrumbs via `{{> components/common/breadcrumbs}}`
 - `{{#partial "page"}}...{{/partial}}` + `{{> layout/base}}` wrappers
-- Injects `window.__PARTS_BOOK_API__ = '/api/v1/parts-book'` for JS to consume
+- Injects `window.__PARTS_BOOK_API__ = '/v1/api/parts-book'` for JS to consume
 
 ### PageManager JS
 
