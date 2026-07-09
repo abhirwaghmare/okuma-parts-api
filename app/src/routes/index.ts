@@ -27,7 +27,7 @@ router.use('/auth', auth);
 router.use('/webhooks', webhooks);
 
 // Versioned API (auth-gated, server-to-server)
-router.use('/api/v1', apiLimiter, authenticateBCToken, v1Router);
+router.use('/v1/api', apiLimiter, authenticateBCToken, v1Router);
 
 // Public v1 routes
 router.use('/v1', customer);

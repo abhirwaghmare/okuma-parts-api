@@ -317,7 +317,7 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<Deale
 // ---------------------------------------------------------------------------
 
 /**
- * GET /api/v1/dealers/context?email=<dealerEmail>
+ * GET /v1/api/dealers/context?email=<dealerEmail>
  *
  * Looks up a dealer by email address and returns their profile together with
  * all customers found under their subsidiaries in the B2B hierarchy.
@@ -417,7 +417,7 @@ router.get('/dealers/context', async (req, res) => {
 });
 
 /**
- * GET /api/v1/dealers/:dealerId/customers
+ * GET /v1/api/dealers/:dealerId/customers
  *
  * Returns all customers under a dealer's B2B hierarchy subsidiaries, enriched
  * with basic identity, customer group, and registered machines.

@@ -9,7 +9,7 @@ const b2bClient = axios.create({
         'X-Store-Hash': config.bc.storeHash,
         'Content-Type': 'application/json',
         Accept: 'application/json',
-    }
+    },
     timeout: 15000,
 });
 
