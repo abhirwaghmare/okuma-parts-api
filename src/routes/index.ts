@@ -19,7 +19,7 @@ router.use('/webhooks', webhooks);
 router.use('/api/v1', v1Router);
 
 // Public v1 routes
-router.use('/v1', dealers);
+router.use('/v1/api', dealers);
 router.use('/v1', customer);
 router.use('/v1', customers);
 router.use('/v1', partsBook);

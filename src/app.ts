@@ -10,6 +10,10 @@ import errorHandler from './middleware/errorHandler';
 
 const app = express();
 
+// Vercel sits behind a reverse proxy that sets X-Forwarded-For.
+// Required so express-rate-limit can identify clients correctly.
+app.set('trust proxy', 1);
+
 app.use(helmet());
 app.use(morgan('dev'));
 
