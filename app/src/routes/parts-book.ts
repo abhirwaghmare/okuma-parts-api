@@ -388,7 +388,7 @@ router.get('/api/machines', async (_req, res) => {
             imageUrl: cat.imageUrl,
             pubNos: cat.pubNos,
         }));
-        return res.json({ machines });
+        return res.json({ count: machines.length, machines });
     } catch (err) {
         console.error('machines: BC category fetch failed:', (err as Error).message);
         return res.status(500).json({ error: 'Could not load machine list.' });
@@ -480,7 +480,7 @@ router.get('/api/customer/:customerId/machines', async (req, res) => {
                 };
             });
 
-        return res.json({ machines });
+        return res.json({ count: machines.length, machines });
     } catch (err) {
         console.error(`customer ${customerId}: machine lookup failed:`, (err as Error).message);
         return res.status(500).json({ error: 'Could not load customer machines.' });
