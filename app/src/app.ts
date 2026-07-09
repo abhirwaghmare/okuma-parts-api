@@ -9,6 +9,10 @@ import errorHandler from './middleware/errorHandler';
 
 const app = express();
 
+if (config.trustProxy) {
+    app.set('trust proxy', 1);
+}
+
 app.use(helmet());
 app.use(morgan('dev'));
 
