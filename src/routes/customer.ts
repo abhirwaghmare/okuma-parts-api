@@ -473,25 +473,25 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
  */
 router.post('/customer/:customerId/machine/select', async (req: Request<{ customerId: string }>, res: Response) => {
     const { customerId } = req.params;
-    const { serialNumber, model } = req.body as { serialNumber?: string; model?: string };
+    const { serial, model } = req.body as { serial?: string; model?: string };
 
     if (!customerId || !/^\d+$/.test(customerId)) {
         return res.status(400).json({ error: 'Invalid customerId.' });
     }
-    if (!serialNumber || typeof serialNumber !== 'string' || !serialNumber.trim()) {
-        return res.status(400).json({ error: 'serialNumber is required.' });
+    if (!serial || typeof serial !== 'string' || !serial.trim()) {
+        return res.status(400).json({ error: 'serial is required.' });
     }
 
     try {
         const meta = await fetchOkumaMetafields(customerId);
         const machines = parseMachines(meta.registered_machines);
         const machine = machines.find(
-            m => m.serial === serialNumber.trim() && (model ? m.model === model.trim() : true)
+            m => m.serial === serial.trim() && (model ? m.model === model.trim() : true)
         );
 
         if (!machine) {
             return res.status(404).json({
-                error: `Machine with serialNumber '${serialNumber}'${model ? ` and model '${model}'` : ''} not found in customer's assigned machines.`,
+                error: `Machine with serial '${serial}'${model ? ` and model '${model}'` : ''} not found in customer's assigned machines.`,
             });
         }
 
@@ -510,10 +510,8 @@ router.post('/customer/:customerId/machine/select', async (req: Request<{ custom
             .map(s => machines.find(m => m.serial === s))
             .filter((m): m is Machine => m !== undefined);
 
-        // Persist to BC metafields (fire-and-forget — do not block the response).
-        // Pass metafield IDs from the initial fetch to skip a redundant GET per upsert.
-        // Promise.allSettled ensures both writes are attempted independently.
-        Promise.allSettled([
+        // Await both BC metafield writes so GET /header-context reads fresh data immediately after.
+        const results = await Promise.allSettled([
             upsertOkumaMetafield(customerId, 'last_viewed_machine', machine.serial, meta._ids.last_viewed_machine),
             upsertOkumaMetafield(
                 customerId,
@@ -521,15 +519,12 @@ router.post('/customer/:customerId/machine/select', async (req: Request<{ custom
                 JSON.stringify(updatedRecent),
                 meta._ids.recent_machines
             ),
-        ]).then(results => {
-            const keys = ['last_viewed_machine', 'recent_machines'];
-            results.forEach((r, i) => {
-                if (r.status === 'rejected') {
-                    logger.error(
-                        `customer ${customerId}: metafield upsert [${keys[i]}] failed: ${(r.reason as Error).message}`
-                    );
-                }
-            });
+        ]);
+        const keys = ['last_viewed_machine', 'recent_machines'];
+        results.forEach((r, i) => {
+            if (r.status === 'rejected') {
+                logger.error(`customer ${customerId}: metafield upsert [${keys[i]}] failed: ${(r.reason as Error).message}`);
+            }
         });
 
         return res.json({ selectedMachine: machine, recentMachines });
