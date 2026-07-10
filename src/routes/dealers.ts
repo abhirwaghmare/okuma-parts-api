@@ -340,7 +340,7 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<Deale
  *   meta:      { totalCustomerIds, returnedCustomerIds, truncated }
  * }
  */
-router.get('/api/dealers/context', async (req, res) => {
+router.get('/dealers/context', async (req, res) => {
     const { email } = req.query;
 
     if (!email || typeof email !== 'string' || !email.trim()) {

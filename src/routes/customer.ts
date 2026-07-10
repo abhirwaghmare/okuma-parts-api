@@ -1,9 +1,11 @@
-import { Router, Request } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import bcClient from '../services/bigcommerce';
+import logger from '../config/logger';
+import authenticateBCToken from '../middleware/auth';
 
 const router = Router();
 
-const RECENT_MACHINES_LIMIT = 5;
+const RECENT_MACHINES_LIMIT = 3;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,6 +30,9 @@ interface OkumaMetafields {
     registered_machines?: string;
     registered_customers?: string;
     dealer_id?: string;
+    last_viewed_machine?: string; // serial of the last explicitly selected machine
+    recent_machines?: string; // JSON array of serials, most-recent first (capped at 3)
+    _ids: Record<string, number>; // key → BC metafield record ID (not serialised to callers)
 }
 
 interface BcCustomer {
@@ -37,6 +42,14 @@ interface BcCustomer {
     last_name: string;
     company: string;
     phone: string;
+    customer_group_id: number | null;
+}
+
+interface BcMetafieldRecord {
+    id: number;
+    key: string;
+    value: string;
+    namespace: string;
 }
 
 interface MachineSessionState {
@@ -49,24 +62,61 @@ interface MachineSessionState {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch all okuma-namespace metafields for a customer in one BC OOTB call.
+ * Fetch all okuma-namespace metafields for a customer in one BC call.
+ * Retains record IDs in `_ids` so callers can skip a redundant GET on upsert.
  * BC OOTB: GET /v3/customers/:id/metafields?namespace=okuma
  */
 async function fetchOkumaMetafields(customerId: string): Promise<OkumaMetafields> {
-    const res = await bcClient.get<{ data: Array<{ key: string; value: string }> }>(
+    const res = await bcClient.get<{ data: Array<{ id: number; key: string; value: string }> }>(
         `/v3/customers/${customerId}/metafields`,
         { params: { namespace: 'okuma' } }
     );
     const fields = res.data?.data ?? [];
-    const map: OkumaMetafields = {};
+    const map: OkumaMetafields = { _ids: {} };
+    // Guard against reserved and prototype-polluting keys. Writing '_ids' would
+    // overwrite internal bookkeeping; writing '__proto__', 'constructor', or
+    // 'prototype' could mutate Object.prototype and cause hard-to-debug runtime issues.
+    const RESERVED_KEYS = new Set<string>([...Object.keys(map), '__proto__', 'constructor', 'prototype']);
     fields.forEach(f => {
-        (map as Record<string, string>)[f.key] = f.value;
+        if (RESERVED_KEYS.has(f.key)) return;
+        (map as unknown as Record<string, string>)[f.key] = f.value;
+        map._ids[f.key] = f.id;
     });
     return map;
 }
 
 /**
- * Fetch customer profile (company, phone, email) from BC OOTB customers API.
+ * Upsert a single okuma-namespace metafield on a customer.
+ * When `existingId` is supplied (from a prior fetchOkumaMetafields call) the
+ * redundant GET to discover the record is skipped — PUT is issued directly.
+ * When omitted, falls back to GET → PUT/POST.
+ */
+async function upsertOkumaMetafield(
+    customerId: string,
+    key: string,
+    value: string,
+    existingId?: number
+): Promise<void> {
+    const payload = { value, namespace: 'okuma', key, permission_set: 'read_and_sf_access' };
+
+    if (existingId !== undefined) {
+        await bcClient.put(`/v3/customers/${customerId}/metafields/${existingId}`, payload);
+        return;
+    }
+
+    const getRes = await bcClient.get<{ data: BcMetafieldRecord[] }>(`/v3/customers/${customerId}/metafields`, {
+        params: { namespace: 'okuma', key },
+    });
+    const existing = getRes.data?.data?.[0] ?? null;
+    if (existing) {
+        await bcClient.put(`/v3/customers/${customerId}/metafields/${existing.id}`, payload);
+    } else {
+        await bcClient.post(`/v3/customers/${customerId}/metafields`, payload);
+    }
+}
+
+/**
+ * Fetch customer profile (company, phone, email) from BC.
  * BC OOTB: GET /v3/customers?id:in=:customerId
  */
 async function fetchCustomerProfile(customerId: string): Promise<BcCustomer | null> {
@@ -75,25 +125,40 @@ async function fetchCustomerProfile(customerId: string): Promise<BcCustomer | nu
             params: { 'id:in': customerId },
         });
         return res.data?.data?.[0] ?? null;
-    } catch {
+    } catch (err) {
+        logger.warn(`fetchCustomerProfile ${customerId}: ${(err as Error).message}`);
         return null;
     }
 }
 
 /**
- * Fetch the dealer's display name from BC.
- * Prefers company field; falls back to first + last name.
- * BC OOTB: GET /v3/customers?id:in=:dealerId
+ * Fetch a customer record by ID.
+ * Returns company name, or falls back to first + last name.
  */
-async function fetchDealerName(dealerId: string): Promise<string | null> {
+async function fetchCustomerName(customerId: string): Promise<{ id: number; name: string } | null> {
     try {
         const res = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-            params: { 'id:in': dealerId },
+            params: { 'id:in': customerId },
         });
-        const dealer = res.data?.data?.[0] ?? null;
-        if (!dealer) return null;
-        return dealer.company || `${dealer.first_name} ${dealer.last_name}`.trim() || null;
-    } catch {
+        const c = res.data?.data?.[0] ?? null;
+        if (!c) return null;
+        return {
+            id: c.id,
+            name: c.company || `${c.first_name} ${c.last_name}`.trim(),
+        };
+    } catch (err) {
+        logger.warn(`fetchCustomerName ${customerId}: ${(err as Error).message}`);
+        return null;
+    }
+}
+
+/** Fetch a BC customer group name by ID via GET /v2/customer_groups/:id. Returns null on failure. */
+async function fetchCustomerGroupName(groupId: number): Promise<string | null> {
+    try {
+        const res = await bcClient.get<{ id: number; name: string }>(`/v2/customer_groups/${groupId}`);
+        return res.data?.name ?? null;
+    } catch (err) {
+        logger.warn(`fetchCustomerGroupName ${groupId}: ${(err as Error).message}`);
         return null;
     }
 }
@@ -127,30 +192,97 @@ function parseMachines(raw: string | undefined): Machine[] {
         });
 }
 
-/** Read per-customer machine context from Express session. */
-function getSessionState(req: Request, customerId: string): MachineSessionState {
+/**
+ * Read per-customer machine context from Express session without mutating it.
+ * Returns a default value when the key is absent so GET handlers do not
+ * dirty the session store on cold requests.
+ */
+function readSessionState(req: Request, customerId: string): MachineSessionState {
+    const session = req.session as unknown as Record<string, unknown> & {
+        machineContext?: Record<string, MachineSessionState>;
+    };
+    return session.machineContext?.[customerId] ?? { selected: null, recent: [] };
+}
+
+/** Persist updated machine context to the session (write handlers only). */
+function writeSessionState(req: Request, customerId: string, state: MachineSessionState): void {
     const session = req.session as unknown as Record<string, unknown> & {
         machineContext?: Record<string, MachineSessionState>;
     };
     if (!session.machineContext) session.machineContext = {};
-    if (!session.machineContext[customerId]) {
-        session.machineContext[customerId] = { selected: null, recent: [] };
-    }
-    return session.machineContext[customerId];
+    session.machineContext[customerId] = state;
 }
 
 /**
- * Resolve the default selected machine:
- * 1. Last selected stored in session (if still in assigned list)
- * 2. First machine sorted alphabetically
+ * Resolve the default selected machine.
+ * Priority: BC last_viewed_machine metafield → session → first alphabetically.
+ * Uses || (not ??) so that an empty-string metafield value falls through to session.
  */
-function resolveDefaultMachine(machines: Machine[], sessionState: MachineSessionState): Machine | null {
+function resolveDefaultMachine(
+    machines: Machine[],
+    lastViewedSerial: string | null | undefined,
+    sessionSerial: string | null
+): Machine | null {
     if (!machines.length) return null;
-    if (sessionState.selected) {
-        const found = machines.find(m => m.serial === sessionState.selected);
+    const preferred = lastViewedSerial || sessionSerial;
+    if (preferred) {
+        const found = machines.find(m => m.serial === preferred);
         if (found) return found;
     }
     return machines[0];
+}
+
+/**
+ * Parse the recent_machines metafield value into an array of serials.
+ * Falls back to the session list on missing value, invalid JSON, or non-array.
+ */
+function parseRecentSerials(raw: string | undefined, sessionFallback: string[]): string[] {
+    if (!raw) return sessionFallback;
+    try {
+        const parsed = JSON.parse(raw) as string[];
+        return Array.isArray(parsed) ? parsed : sessionFallback;
+    } catch {
+        return sessionFallback;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session-based customer authorization
+// ---------------------------------------------------------------------------
+
+/**
+ * Bind the caller's session to the given customer ID.
+ * Called by the Stencil front-end after BC native login has been confirmed.
+ * The customer's existence in BC is verified before the session is written.
+ */
+async function bindCustomerSession(req: Request, customerId: string): Promise<void> {
+    const res = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
+        params: { 'id:in': customerId },
+    });
+    if (!res.data?.data?.[0]) {
+        throw Object.assign(new Error('Customer not found'), { statusCode: 404 });
+    }
+    req.session.customerId = customerId;
+}
+
+/**
+ * Express middleware — ensures the session's authenticated customer matches
+ * the `:customerId` route parameter. Returns 401 when no session identity is
+ * present and 403 when the identity doesn't match the requested resource.
+ */
+function requireCustomerAuth(req: Request, res: Response, next: NextFunction): void {
+    const { customerId } = req.params;
+    const sessionCustomerId = req.session.customerId;
+
+    if (!sessionCustomerId) {
+        res.status(401).json({ error: 'Not authenticated.' });
+        return;
+    }
+    if (sessionCustomerId !== customerId) {
+        res.status(403).json({ error: 'Forbidden.' });
+        return;
+    }
+    next();
 }
 
 // ---------------------------------------------------------------------------
@@ -158,120 +290,264 @@ function resolveDefaultMachine(machines: Machine[], sessionState: MachineSession
 // ---------------------------------------------------------------------------
 
 /**
- * GET /api/customer/:customerId/header-context
+ * POST /customer/:customerId/session
+ *
+ * Establishes a session for the authenticated customer.
+ * This route is restricted to trusted server-to-server callers so an arbitrary
+ * browser client cannot bind a session to another customer's ID.
+ * Existence in BC is verified before the session is written.
+ *
+ * Response: 204 No Content on success.
+ */
+router.post(
+    '/customer/:customerId/session',
+    authenticateBCToken,
+    async (req: Request<{ customerId: string }>, res: Response) => {
+        const { customerId } = req.params;
+
+        if (!customerId || !/^\d+$/.test(customerId)) {
+            return res.status(400).json({ error: 'Invalid customerId.' });
+        }
+
+        try {
+            await bindCustomerSession(req, customerId);
+            return res.status(204).send();
+        } catch (err) {
+            const { statusCode } = err as { statusCode?: number };
+            if (statusCode === 404) {
+                return res.status(404).json({ error: 'Customer not found.' });
+            }
+            logger.error(`customer ${customerId}: session bind failed: ${(err as Error).message}`);
+            return res.status(500).json({ error: 'Could not establish customer session.' });
+        }
+    }
+);
+
+/**
+ * GET /customer/:customerId/distributor
+ *
+ * Returns the distributor/dealer assigned to the customer.
+ * The binding is stored as an okuma/dealer_id metafield on the customer.
+ *
+ * Response: { dealerId: number, dealerName: string } | { dealerId: null, dealerName: null }
+ */
+router.get(
+    '/customer/:customerId/distributor',
+    requireCustomerAuth,
+    async (req: Request<{ customerId: string }>, res: Response) => {
+        const { customerId } = req.params;
+
+        if (!customerId || !/^\d+$/.test(customerId)) {
+            return res.status(400).json({ error: 'Invalid customerId.' });
+        }
+
+        try {
+            const meta = await fetchOkumaMetafields(customerId);
+
+            if (!meta.dealer_id) {
+                return res.json({ dealerId: null, dealerName: null });
+            }
+
+            const dealerIdNum = parseInt(meta.dealer_id, 10);
+            if (Number.isNaN(dealerIdNum)) {
+                logger.warn(`customer ${customerId}: dealer_id metafield is non-numeric: "${meta.dealer_id}"`);
+                return res.json({ dealerId: null, dealerName: null });
+            }
+
+            const dealer = await fetchCustomerName(meta.dealer_id);
+
+            return res.json({
+                dealerId: dealer ? dealer.id : dealerIdNum,
+                dealerName: dealer ? dealer.name : null,
+            });
+        } catch (err) {
+            logger.error(`customer ${customerId}: distributor lookup failed: ${(err as Error).message}`);
+            return res.status(500).json({ error: 'Could not load distributor.' });
+        }
+    }
+);
+
+/**
+ * GET /customer/:customerId/machines
+ *
+ * Returns assigned machines (model + serial) from the registered_machines metafield.
+ *
+ * Response: { count: number, machines: [{ model, serial, display, installDate, status }] }
+ */
+router.get(
+    '/customer/:customerId/machines',
+    requireCustomerAuth,
+    async (req: Request<{ customerId: string }>, res: Response) => {
+        const { customerId } = req.params;
+
+        if (!customerId || !/^\d+$/.test(customerId)) {
+            return res.status(400).json({ error: 'Invalid customerId.' });
+        }
+
+        try {
+            const meta = await fetchOkumaMetafields(customerId);
+            const machines = parseMachines(meta.registered_machines);
+            return res.json({ count: machines.length, machines });
+        } catch (err) {
+            logger.error(`customer ${customerId}: machines fetch failed: ${(err as Error).message}`);
+            return res.status(500).json({ error: 'Could not load customer machines.' });
+        }
+    }
+);
+
+/**
+ * GET /customer/:customerId/header-context
  *
  * Returns all data needed for the machine-selector sub-header and account
  * summary card in one response.
  *
- * BC OOTB calls (single parallel batch):
- *   - GET /v3/customers/:id/metafields?namespace=okuma  → machines, dealer_id, dealer flag
- *   - GET /v3/customers?id:in=:id                       → company, phone, email
- *   - GET /v3/customers?id:in=:dealerId                 → dealer display name
+ * Default machine priority: BC last_viewed_machine metafield → session → first alphabetically.
+ * Recent machines: BC recent_machines metafield (survives logout) → session fallback, capped at 3.
  *
  * Response for dealer:        { isDealer: true }
  * Response for regular user:
  * {
  *   isDealer: false,
  *   customer:        { firstName, lastName, email, company, phone },
- *   dealerName:      "ABC Industries" | null,
+ *   dealerName:      string | null,
  *   selectedMachine: { model, serial, display, installDate, status } | null,
- *   machines:        [...],       // all active, sorted A→Z
- *   recentMachines:  [...]        // last 5 selected, most-recent first
+ *   machines:        [...],              // all active, sorted A→Z
+ *   recentMachines:  [...]              // last 3 selected, most-recent first
  * }
  */
-router.get('/api/customer/:customerId/header-context', async (req, res) => {
-    const { customerId } = req.params;
+router.get(
+    '/customer/:customerId/header-context',
+    requireCustomerAuth,
+    async (req: Request<{ customerId: string }>, res: Response) => {
+        const { customerId } = req.params;
 
-    if (!customerId || !/^\d+$/.test(customerId)) {
-        return res.status(400).json({ error: 'Invalid customerId.' });
-    }
-
-    try {
-        // Single okuma metafield call + customer profile in parallel
-        const [meta, profile] = await Promise.all([fetchOkumaMetafields(customerId), fetchCustomerProfile(customerId)]);
-
-        // Dealers have registered_customers metafield — sub-header not shown for them
-        if (meta.registered_customers !== undefined) {
-            return res.json({ isDealer: true });
+        if (!customerId || !/^\d+$/.test(customerId)) {
+            return res.status(400).json({ error: 'Invalid customerId.' });
         }
 
-        const machines = parseMachines(meta.registered_machines);
+        try {
+            const [meta, profile] = await Promise.all([
+                fetchOkumaMetafields(customerId),
+                fetchCustomerProfile(customerId),
+            ]);
 
-        // Fetch dealer name only if dealer_id exists
-        const dealerName = meta.dealer_id ? await fetchDealerName(meta.dealer_id) : null;
+            if (meta.registered_customers !== undefined) {
+                return res.json({ isDealer: true });
+            }
 
-        const sessionState = getSessionState(req, customerId);
-        const selectedMachine = resolveDefaultMachine(machines, sessionState);
+            const machines = parseMachines(meta.registered_machines);
+            const dealerName = profile?.customer_group_id
+                ? await fetchCustomerGroupName(profile.customer_group_id)
+                : null;
 
-        const recentMachines = (sessionState.recent ?? [])
-            .map(serial => machines.find(m => m.serial === serial))
-            .filter((m): m is Machine => m !== undefined);
+            // readSessionState never mutates req.session — avoids a store write on every GET
+            const sessionState = readSessionState(req, customerId);
+            const selectedMachine = resolveDefaultMachine(machines, meta.last_viewed_machine, sessionState.selected);
 
-        return res.json({
-            isDealer: false,
-            customer: profile
-                ? {
-                      firstName: profile.first_name,
-                      lastName: profile.last_name,
-                      email: profile.email,
-                      company: profile.company || null,
-                      phone: profile.phone || null,
-                  }
-                : null,
-            dealerName,
-            selectedMachine,
-            machines,
-            recentMachines,
-        });
-    } catch (err) {
-        console.error(`customer ${customerId}: header-context failed:`, (err as Error).message);
-        return res.status(500).json({ error: 'Could not load customer context.' });
+            const recentSerials = parseRecentSerials(meta.recent_machines, sessionState.recent ?? []);
+            const recentMachines = recentSerials
+                .slice(0, RECENT_MACHINES_LIMIT)
+                .map(serial => machines.find(m => m.serial === serial))
+                .filter((m): m is Machine => m !== undefined);
+
+            return res.json({
+                isDealer: false,
+                customer: profile
+                    ? {
+                          firstName: profile.first_name,
+                          lastName: profile.last_name,
+                          email: profile.email,
+                          company: profile.company || null,
+                          phone: profile.phone || null,
+                      }
+                    : null,
+                dealerName,
+                selectedMachine,
+                machines,
+                recentMachines,
+            });
+        } catch (err) {
+            logger.error(`customer ${customerId}: header-context failed: ${(err as Error).message}`);
+            return res.status(500).json({ error: 'Could not load customer context.' });
+        }
     }
-});
+);
 
 /**
- * POST /api/customer/:customerId/machine/select
+ * POST /customer/:customerId/machine/select
  *
- * Persists the selected machine in session and prepends it to recent list.
- * Called by the frontend AFTER the user confirms cart clearance (if needed).
+ * Records the customer's machine selection.
+ * - Updates session (immediate)
+ * - Persists last_viewed_machine to BC metafield (survives logout, sets default on next visit)
+ * - Persists recent_machines to BC metafield (survives logout, drives Recent section, capped at 3)
  *
  * Body:     { "serial": "M5-2891-K" }
  * Response: { "selectedMachine": { model, serial, display, installDate, status } }
  */
-router.post('/api/customer/:customerId/machine/select', async (req, res) => {
-    const { customerId } = req.params;
-    const { serial } = req.body as { serial?: string };
+router.post(
+    '/customer/:customerId/machine/select',
+    requireCustomerAuth,
+    async (req: Request<{ customerId: string }>, res: Response) => {
+        const { customerId } = req.params;
+        const { serial } = req.body as { serial?: string };
 
-    if (!customerId || !/^\d+$/.test(customerId)) {
-        return res.status(400).json({ error: 'Invalid customerId.' });
-    }
-    if (!serial || typeof serial !== 'string' || !serial.trim()) {
-        return res.status(400).json({ error: 'serial is required.' });
-    }
-
-    try {
-        const meta = await fetchOkumaMetafields(customerId);
-        const machines = parseMachines(meta.registered_machines);
-        const machine = machines.find(m => m.serial === serial.trim());
-
-        if (!machine) {
-            return res.status(404).json({
-                error: `Machine with serial '${serial}' not found in customer's assigned machines.`,
-            });
+        if (!customerId || !/^\d+$/.test(customerId)) {
+            return res.status(400).json({ error: 'Invalid customerId.' });
+        }
+        if (!serial || typeof serial !== 'string' || !serial.trim()) {
+            return res.status(400).json({ error: 'serial is required.' });
         }
 
-        const sessionState = getSessionState(req, customerId);
-        sessionState.selected = machine.serial;
-        sessionState.recent = [machine.serial, ...(sessionState.recent ?? []).filter(s => s !== machine.serial)].slice(
-            0,
-            RECENT_MACHINES_LIMIT
-        );
+        try {
+            const meta = await fetchOkumaMetafields(customerId);
+            const machines = parseMachines(meta.registered_machines);
+            const machine = machines.find(m => m.serial === serial.trim());
 
-        return res.json({ selectedMachine: machine });
-    } catch (err) {
-        console.error(`customer ${customerId}: machine select failed:`, (err as Error).message);
-        return res.status(500).json({ error: 'Could not select machine.' });
+            if (!machine) {
+                return res.status(404).json({
+                    error: `Machine with serial '${serial}' not found in customer's assigned machines.`,
+                });
+            }
+
+            // Seed recent list from BC metafield so cross-session history is preserved
+            const sessionState = readSessionState(req, customerId);
+            const baseRecent = parseRecentSerials(meta.recent_machines, sessionState.recent ?? []);
+
+            const updatedRecent = [machine.serial, ...baseRecent.filter(s => s !== machine.serial)].slice(
+                0,
+                RECENT_MACHINES_LIMIT
+            );
+
+            writeSessionState(req, customerId, { selected: machine.serial, recent: updatedRecent });
+
+            // Persist to BC metafields (fire-and-forget — do not block the response).
+            // Pass metafield IDs from the initial fetch to skip a redundant GET per upsert.
+            // Promise.allSettled ensures both writes are attempted independently.
+            Promise.allSettled([
+                upsertOkumaMetafield(customerId, 'last_viewed_machine', machine.serial, meta._ids.last_viewed_machine),
+                upsertOkumaMetafield(
+                    customerId,
+                    'recent_machines',
+                    JSON.stringify(updatedRecent),
+                    meta._ids.recent_machines
+                ),
+            ]).then(results => {
+                const keys = ['last_viewed_machine', 'recent_machines'];
+                results.forEach((r, i) => {
+                    if (r.status === 'rejected') {
+                        logger.error(
+                            `customer ${customerId}: metafield upsert [${keys[i]}] failed: ${(r.reason as Error).message}`
+                        );
+                    }
+                });
+            });
+
+            return res.json({ selectedMachine: machine });
+        } catch (err) {
+            logger.error(`customer ${customerId}: machine select failed: ${(err as Error).message}`);
+            return res.status(500).json({ error: 'Could not select machine.' });
+        }
     }
-});
+);
 
 export default router;
