@@ -3,30 +3,28 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const bigcommerce_1 = __importDefault(require("../services/bigcommerce"));
+const crypto_1 = __importDefault(require("crypto"));
+const config_1 = __importDefault(require("../config"));
 const logger_1 = __importDefault(require("../config/logger"));
 const errors_1 = require("./errors");
-async function authenticateBCToken(req, _res, next) {
-    const token = req.headers['x-auth-token'];
-    if (!token || typeof token !== 'string') {
+function authenticateBCToken(req, _res, next) {
+    const rawToken = req.headers['x-auth-token'];
+    if (!rawToken || Array.isArray(rawToken)) {
         next(new errors_1.UnauthorizedError('Missing X-Auth-Token header'));
         return;
     }
-    try {
-        // Validate by hitting a lightweight BC endpoint with the caller's token.
-        // bcClient interceptor handles logging of any BC-level error.
-        await bigcommerce_1.default.get('/v2/store', { headers: { 'X-Auth-Token': token } });
-        next();
+    const token = rawToken;
+    const expected = config_1.default.bc.accessToken ?? '';
+    const tokenBuf = Buffer.from(token);
+    const expectedBuf = Buffer.from(expected);
+    const valid = tokenBuf.length === expectedBuf.length &&
+        crypto_1.default.timingSafeEqual(tokenBuf, expectedBuf);
+    if (!valid) {
+        logger_1.default.warn(`Invalid X-Auth-Token from ${req.ip}`);
+        next(new errors_1.UnauthorizedError('Invalid X-Auth-Token'));
+        return;
     }
-    catch (err) {
-        const status = err.response?.status;
-        if (status === 401 || status === 403) {
-            logger_1.default.warn(`Rejected request with invalid X-Auth-Token from ${req.ip}`);
-            next(new errors_1.UnauthorizedError('Invalid X-Auth-Token'));
-            return;
-        }
-        next(err);
-    }
+    next();
 }
 exports.default = authenticateBCToken;
 //# sourceMappingURL=auth.js.map

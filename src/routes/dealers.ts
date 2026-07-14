@@ -16,18 +16,22 @@ const RECENT_SEARCH_LIMIT = 3;
 // Types — BC
 // ---------------------------------------------------------------------------
 
-interface RawMachine {
-    serial?: string;
-    model?: string;
-    install_date?: string;
-    status?: string;
-}
-
 interface Machine {
     serial: string | null;
     model: string | null;
     installDate: string | null;
     status: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Types — B2B Machines extra field
+// ---------------------------------------------------------------------------
+
+interface B2BMachineRecord {
+    modelNo?: string;
+    serialNo?: string;
+    installDate?: string;
+    status?: string;
 }
 
 interface BcCustomer {
@@ -99,6 +103,7 @@ interface DealerCustomerResult {
     customerIds: number[];
     totalCustomerIds: number;
     truncated: boolean;
+    machinesByCustomerId: Record<number, Machine[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,23 +135,25 @@ async function fetchCustomerGroupMap(): Promise<Record<number, string>> {
 }
 
 /**
- * Fetch the registered_machines metafield for one customer.
- * Returns [] on missing metafield, invalid JSON, or API failure.
+ * Fetch machines for a B2B company from its Machines extra field.
+ * Returns [] on missing field, invalid JSON, or API failure.
  */
-async function fetchRegisteredMachines(customerId: number): Promise<Machine[]> {
+async function fetchB2BCompanyMachines(companyId: number): Promise<Machine[]> {
     try {
-        const res = await bcClient.get<{ data: Array<{ key: string; namespace: string; value: string }> }>(
-            `/v3/customers/${customerId}/metafields`,
-            { params: { namespace: 'okuma', key: 'registered_machines' } }
+        const res = await b2bClient.get<{ data: { extraFields?: Array<{ fieldName: string; fieldValue: string }> } }>(
+            `/api/v3/io/companies/${companyId}`
         );
-        const field = res.data?.data?.[0] ?? null;
+        const extraFields = res.data?.data?.extraFields ?? [];
+        const field = extraFields.find(f => f.fieldName.toLowerCase() === 'machines');
         if (!field) return [];
 
-        let raw: RawMachine[];
+        let raw: B2BMachineRecord[];
         try {
-            raw = JSON.parse(field.value) as RawMachine[];
+            const sanitized = field.fieldValue.replace(/,(\s*[}\]])/g, '$1');
+            const parsed = JSON.parse(sanitized);
+            raw = Array.isArray(parsed) ? parsed : (parsed?.machines ?? []);
         } catch {
-            logger.error(`dealer-customers: registered_machines for customer ${customerId} is not valid JSON`);
+            logger.error(`dealers: company ${companyId} Machines extra field is not valid JSON`);
             return [];
         }
 
@@ -155,13 +162,13 @@ async function fetchRegisteredMachines(customerId: number): Promise<Machine[]> {
         return raw
             .filter(m => m.status !== 'Inactive')
             .map(m => ({
-                serial: m.serial ?? null,
-                model: m.model ?? null,
-                installDate: m.install_date ?? null,
+                serial: m.serialNo ?? null,
+                model: m.modelNo ?? null,
+                installDate: m.installDate || null,
                 status: m.status ?? null,
             }));
     } catch (err) {
-        logger.error(`dealer-customers: metafield fetch failed for customer ${customerId}: ${(err as Error).message}`);
+        logger.error(`dealers: company ${companyId} machines fetch failed: ${(err as Error).message}`);
         return [];
     }
 }
@@ -288,7 +295,7 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<Deale
     const dealerCompanyId = await fetchB2BCompanyIdByEmail(dealerEmail);
     if (!dealerCompanyId) {
         logger.warn(`dealer-hierarchy: no B2B company found for email ${dealerEmail}`);
-        return { customerIds: [], totalCustomerIds: 0, truncated: false };
+        return { customerIds: [], totalCustomerIds: 0, truncated: false, machinesByCustomerId: {} };
     }
 
     logger.info(`dealer-hierarchy: resolved B2B company ${dealerCompanyId} for ${dealerEmail}`);
@@ -296,24 +303,38 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<Deale
     const subsidiaries = await fetchB2BSubsidiaries(dealerCompanyId);
     if (subsidiaries.length === 0) {
         logger.warn(`dealer-hierarchy: company ${dealerCompanyId} has no subsidiaries`);
-        return { customerIds: [], totalCustomerIds: 0, truncated: false };
+        return { customerIds: [], totalCustomerIds: 0, truncated: false, machinesByCustomerId: {} };
     }
 
     logger.info(`dealer-hierarchy: found ${subsidiaries.length} subsidiaries under company ${dealerCompanyId}`);
 
-    const userArrays = await batchedMap(subsidiaries, sub => fetchB2BCompanyUsers(sub.companyId), 5);
+    const subsidiaryData = await batchedMap(
+        subsidiaries,
+        async sub => {
+            const [users, machines] = await Promise.all([
+                fetchB2BCompanyUsers(sub.companyId),
+                fetchB2BCompanyMachines(sub.companyId),
+            ]);
+            return { users, machines };
+        },
+        5
+    );
 
     const seen = new Set<number>();
-    const customerIds: number[] = userArrays
-        .flat()
-        .filter(user => user.customerId > 0)
-        .reduce((acc, user) => {
-            if (!seen.has(user.customerId)) {
-                seen.add(user.customerId);
-                acc.push(user.customerId);
+    const customerIds: number[] = [];
+    const machinesByCustomerId: Record<number, Machine[]> = {};
+
+    subsidiaryData.forEach(({ users, machines }) => {
+        users.forEach(user => {
+            if (user.customerId > 0) {
+                if (!seen.has(user.customerId)) {
+                    seen.add(user.customerId);
+                    customerIds.push(user.customerId);
+                }
+                machinesByCustomerId[user.customerId] = machines;
             }
-            return acc;
-        }, [] as number[]);
+        });
+    });
 
     const validCustomerIds = customerIds.filter(id => Number.isInteger(id) && id > 0);
     const totalCustomerIds = validCustomerIds.length;
@@ -329,6 +350,7 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<Deale
         customerIds: validCustomerIds.slice(0, BC_CUSTOMER_FILTER_LIMIT),
         totalCustomerIds,
         truncated,
+        machinesByCustomerId,
     };
 }
 
@@ -414,8 +436,8 @@ async function upsertRecentCustomerSearches(
  * BC OOTB calls:
  *   [4] GET /v3/customers?email:in=<email>&limit=1         → dealer customer record
  *   [5] GET /v3/customers?id:in=<customerIds>&limit=250    → customer profiles
- *   [6] GET /v3/customers/:id/metafields ×N (batched 10)   → registered machines
- *   [7] GET /v2/customer_groups                            → group names (cached 5 min)
+ *   [6] GET /api/v3/io/companies/{id} ×subsidiaries (batched 5) → company Machines extra field
+ *   [7] GET /v2/customer_groups                                  → group names (cached 5 min)
  *
  * Response:
  * {
@@ -448,8 +470,9 @@ router.get('/dealers/context', async (req, res) => {
             return res.status(404).json({ error: 'No customer found for the supplied email.' });
         }
 
-        // -- 2. Resolve customer IDs from B2B hierarchy --
-        const { customerIds, totalCustomerIds, truncated } = await fetchCustomerIdsFromHierarchy(emailNorm);
+        // -- 2. Resolve customer IDs and company machines from B2B hierarchy --
+        const { customerIds, totalCustomerIds, truncated, machinesByCustomerId } =
+            await fetchCustomerIdsFromHierarchy(emailNorm);
 
         if (customerIds.length === 0) {
             return res.json({
@@ -459,21 +482,15 @@ router.get('/dealers/context', async (req, res) => {
             });
         }
 
-        // -- 3. Enrich: customer profiles, machines (batched), and groups in parallel --
-        const [customersRes, machinesResults, groupMap] = await Promise.all([
+        // -- 3. Enrich: customer profiles and groups in parallel (machines already resolved) --
+        const [customersRes, groupMap] = await Promise.all([
             bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
                 params: { 'id:in': customerIds.join(','), limit: BC_CUSTOMER_FILTER_LIMIT },
             }),
-            batchedMap(customerIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
             fetchCustomerGroupMap(),
         ]);
 
         const bcCustomers = customersRes.data?.data ?? [];
-
-        const machinesById: Record<number, Machine[]> = {};
-        machinesResults.forEach(({ id, machines }) => {
-            machinesById[id] = machines;
-        });
 
         const customers = bcCustomers.map(c => ({
             id: c.id,
@@ -486,7 +503,7 @@ router.get('/dealers/context', async (req, res) => {
             },
             dateCreated: c.date_created ?? null,
             dateModified: c.date_modified ?? null,
-            registeredMachines: machinesById[c.id] ?? [],
+            registeredMachines: machinesByCustomerId[c.id] ?? [],
         }));
 
         return res.json({
@@ -514,7 +531,7 @@ router.get('/dealers/context', async (req, res) => {
  * BC OOTB calls:
  *   [4] GET /v3/customers?id:in=<dealerId>                        → dealer customer record (for email)
  *   [5] GET /v3/customers?id:in=<customerIds>&limit=250           → customer profiles
- *   [6] GET /v3/customers/:id/metafields ×N (batched 10)          → registered machines
+ *   [6] GET /api/v3/io/companies/{id} ×subsidiaries (batched 5)   → company Machines extra field
  *   [7] GET /v2/customer_groups                                    → group names (cached 5 min)
  *
  * Response:
@@ -544,8 +561,10 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
             return res.status(404).json({ error: 'Dealer not found.' });
         }
 
-        // -- 2. Resolve customer IDs from B2B hierarchy --
-        const { customerIds, totalCustomerIds, truncated } = await fetchCustomerIdsFromHierarchy(dealerRecord.email);
+        // -- 2. Resolve customer IDs and company machines from B2B hierarchy --
+        const { customerIds, totalCustomerIds, truncated, machinesByCustomerId } = await fetchCustomerIdsFromHierarchy(
+            dealerRecord.email
+        );
 
         if (customerIds.length === 0) {
             return res.json({
@@ -555,21 +574,15 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
             });
         }
 
-        // -- 3. Enrich: customer profiles, machines (batched), and groups in parallel --
-        const [customersRes, machinesResults, groupMap] = await Promise.all([
+        // -- 3. Enrich: customer profiles and groups in parallel (machines already resolved) --
+        const [customersRes, groupMap] = await Promise.all([
             bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
                 params: { 'id:in': customerIds.join(','), limit: BC_CUSTOMER_FILTER_LIMIT },
             }),
-            batchedMap(customerIds, id => fetchRegisteredMachines(id).then(machines => ({ id, machines })), 10),
             fetchCustomerGroupMap(),
         ]);
 
         const bcCustomers = customersRes.data?.data ?? [];
-
-        const machinesById: Record<number, Machine[]> = {};
-        machinesResults.forEach(({ id, machines }) => {
-            machinesById[id] = machines;
-        });
 
         const customers = bcCustomers.map(c => ({
             id: c.id,
@@ -582,7 +595,7 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
             },
             dateCreated: c.date_created ?? null,
             dateModified: c.date_modified ?? null,
-            registeredMachines: machinesById[c.id] ?? [],
+            registeredMachines: machinesByCustomerId[c.id] ?? [],
         }));
 
         return res.json({

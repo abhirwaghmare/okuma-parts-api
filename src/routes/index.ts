@@ -8,7 +8,6 @@ import webhooks from './webhooks';
 import v1Router from './v1';
 import customer from './customer';
 import customers from './customers';
-import partsBook from './parts-book';
 import cart from './cart';
 import dashboard from './dashboard';
 
@@ -34,7 +33,6 @@ router.use('/v1/api', apiLimiter, authenticateBCToken, v1Router);
 // Public v1 routes
 router.use('/v1', customer);
 router.use('/v1', customers);
-router.use('/v1', partsBook);
 router.use('/v1', apiLimiter, cart);
 router.use('/v1/dashboard', apiLimiter, authenticateBCToken, dashboard);
 

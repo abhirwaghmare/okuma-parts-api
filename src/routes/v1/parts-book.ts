@@ -3,6 +3,7 @@ import { Router, NextFunction, Request, Response } from 'express';
 import config from '../../config';
 import logger from '../../config/logger';
 import bcClient from '../../services/bigcommerce';
+import b2bClient from '../../services/b2b';
 import { AppError, NotFoundError } from '../../middleware/errors';
 
 const router = Router();
@@ -67,14 +68,6 @@ interface BcProduct {
     availability: string;
 }
 
-interface BcCategory {
-    id: number;
-    name: string;
-    image_url?: string;
-    parent_id: number;
-    description?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -132,40 +125,10 @@ function boxToPercent(box: number[]): { calloutX: number; calloutY: number } | n
     return { calloutX: cx, calloutY: cy };
 }
 
-async function fetchCategoryImages(categoryIds: number[]): Promise<Record<number, string>> {
-    if (!categoryIds.length) return {};
-    try {
-        const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
-            params: {
-                'id:in': categoryIds.join(','),
-                limit: categoryIds.length,
-                include_fields: 'id,image_url',
-            },
-        });
-        const result: Record<number, string> = {};
-        (response.data?.data || []).forEach(cat => {
-            result[cat.id] = cat.image_url ?? '';
-        });
-        return result;
-    } catch (err) {
-        logger.error(`parts-book: category image lookup failed: ${(err as Error).message}`);
-        return {};
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
-/**
- * GET /api/parts-book/toc
- * GET /api/parts-book/toc?id=<pdfId>
- *
- * Without ?id  — returns the full table of contents enriched with BC CDN image
- *               paths and category images.
- * With    ?id  — returns a single document entry matching that pdfId.
- *               Responds 404 when the id is not found.
- */
 router.get('/parts-book/toc', async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const toc = await fetchDataJson<Toc>('toc.json');
@@ -174,20 +137,7 @@ router.get('/parts-book/toc', async (_req: Request, res: Response, next: NextFun
             return next(new AppError('Table of contents not available.', 500));
         }
 
-        const rewritten = rewriteTocImagePaths(toc);
-
-        const categoryIds = rewritten.documents
-            .map(d => d.category_id)
-            .filter((id): id is number => typeof id === 'number');
-
-        const categoryImages = await fetchCategoryImages([...new Set(categoryIds)]);
-
-        const documents = rewritten.documents.map(doc => ({
-            ...doc,
-            category_image: doc.category_id ? (categoryImages[doc.category_id] ?? '') : '',
-        }));
-
-        return res.json({ ...rewritten, documents });
+        return res.json(rewriteTocImagePaths(toc));
     } catch (err) {
         return next(err);
     }
@@ -295,144 +245,11 @@ router.get(
 // Machines
 // ---------------------------------------------------------------------------
 
-const MACHINE_PARENT_IDS = [301, 302, 303, 304];
-
-const PARENT_LABELS: Record<number, string> = {
-    301: 'Grinding Machines',
-    302: 'Turning Centers',
-    303: 'Multi-Tasking Machines',
-    304: 'Machining Centers',
-};
-
-const PUB_NO_RE = /Pub\s+No\.\s*([A-Z]{2}\d{2}-\d{3}-[A-Z0-9]+)/gi;
-
-function parsePubNos(description: string | undefined): string[] {
-    if (!description) return [];
-    const plain = description.replace(/<[^>]+>/g, ' ');
-    return Array.from(plain.matchAll(PUB_NO_RE), m => m[1].toUpperCase());
-}
-
-router.get('/machines', async (_req: Request, res: Response, next: NextFunction) => {
-    try {
-        const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
-            params: {
-                'parent_id:in': MACHINE_PARENT_IDS.join(','),
-                limit: 250,
-                include_fields: 'id,name,image_url,parent_id,description',
-            },
-        });
-
-        const machines = (response.data?.data ?? []).map(cat => ({
-            categoryId: cat.id,
-            name: cat.name,
-            machineType: PARENT_LABELS[cat.parent_id] ?? null,
-            imageUrl: cat.image_url ?? '',
-            pubNos: parsePubNos(cat.description),
-        }));
-
-        return res.json({ machines });
-    } catch (err) {
-        return next(err);
-    }
-});
-
-interface MachineCategory {
-    categoryId: number;
-    name: string;
-    machineType: string | null;
-    imageUrl: string;
-    pubNos: string[];
-    _normalised: string;
-}
-
-// Cache for machine categories — avoids a BC API call on every request.
-// TTL of 5 minutes; categories change rarely in production.
-let _machineCategoryCache: MachineCategory[] | null = null;
-let _machineCategoryCachedAt = 0;
-const MACHINE_CATEGORY_TTL = 5 * 60 * 1000;
-
-/**
- * Fetch all machine model categories from BC OOTB categories API and cache
- * the result for MACHINE_CATEGORY_TTL milliseconds.
- *
- * BC OOTB: GET /v3/catalog/categories?parent_id:in=301,302,303,304
- *   &include_fields=id,name,image_url,parent_id,description&limit=250
- *
- * image_url  → category image (direct from BC)
- * description → pub numbers parsed out of the HTML description field
- */
-async function fetchMachineCategories(): Promise<MachineCategory[]> {
-    const now = Date.now();
-    if (_machineCategoryCache && now - _machineCategoryCachedAt < MACHINE_CATEGORY_TTL) {
-        return _machineCategoryCache;
-    }
-    const response = await bcClient.get<{ data: BcCategory[] }>('/v3/catalog/categories', {
-        params: {
-            'parent_id:in': MACHINE_PARENT_IDS.join(','),
-            limit: 250,
-            include_fields: 'id,name,image_url,parent_id,description',
-        },
-    });
-    _machineCategoryCache = (response.data?.data ?? []).map(cat => ({
-        categoryId: cat.id,
-        name: cat.name,
-        machineType: PARENT_LABELS[cat.parent_id] ?? null,
-        imageUrl: cat.image_url ?? '',
-        pubNos: parsePubNos(cat.description),
-        _normalised: cat.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
-    }));
-    _machineCategoryCachedAt = now;
-    return _machineCategoryCache;
-}
-
-/**
- * GET /api/machines
- *
- * Returns all machine model categories enriched with BC category image
- * (image_url from BC OOTB) and pub number parsed from the BC description field.
- * Uses the shared fetchMachineCategories cache — no extra BC call when warm.
- */
-router.get('/api/machines', async (_req, res) => {
-    try {
-        const categories = await fetchMachineCategories();
-        const machines = categories.map(cat => ({
-            categoryId: cat.categoryId,
-            name: cat.name,
-            machineType: cat.machineType,
-            imageUrl: cat.imageUrl,
-            pubNos: cat.pubNos,
-        }));
-        return res.json({ machines });
-    } catch (err) {
-        console.error('machines: BC category fetch failed:', (err as Error).message);
-        return res.status(500).json({ error: 'Could not load machine list.' });
-    }
-});
-
-function matchCategory(modelName: string | undefined, categories: MachineCategory[]): MachineCategory | null {
-    if (!modelName) return null;
-    const norm = modelName.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-    const exact = categories.find(c => c._normalised === norm);
-    if (exact) return exact;
-
-    const sub = categories.find(c => norm.includes(c._normalised) || c._normalised.includes(norm));
-    if (sub) return sub;
-
-    const series = modelName.toLowerCase().match(/^[a-z]+/);
-    if (series) {
-        const seriesNorm = series[0];
-        const seriesMatch = categories.find(c => c._normalised.startsWith(seriesNorm));
-        if (seriesMatch) return seriesMatch;
-    }
-
-    return null;
-}
-
-interface RawMachine {
-    serial?: string;
-    model?: string;
-    install_date?: string;
+interface B2BMachine {
+    modelNo?: string;
+    serialNo?: string;
+    publicationNos?: string[];
+    installDate?: string;
     status?: string;
 }
 
@@ -443,26 +260,48 @@ router.get('/customer/:customerId/machines', async (req: Request, res: Response,
         return next(new AppError('Invalid customerId.', 400));
     }
 
+    const page = Math.max(1, parseInt((req.query.page as string) || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || '10', 10)));
+
     try {
-        const [metaRes, categories] = await Promise.all([
-            bcClient.get<{ data: Array<{ key: string; namespace: string; value: string }> }>(
-                `/v3/customers/${customerId}/metafields`
-            ),
-            fetchMachineCategories(),
-        ]);
-
-        const metafields = metaRes.data?.data ?? [];
-        const rmField = metafields.find(m => m.key === 'registered_machines' && m.namespace === 'okuma');
-
-        if (!rmField) {
+        // Step 1 — resolve B2B companyId: get customer email from BC, then look up B2B user by email
+        const customerRes = await bcClient.get<{ data: Array<{ email: string }> }>(`/v3/customers`, {
+            params: { 'id:in': customerId },
+        });
+        const email = customerRes.data?.data?.[0]?.email;
+        if (!email) {
             return res.json({ machines: [] });
         }
 
-        let rawMachines: RawMachine[];
+        const usersRes = await b2bClient.get<{ data: Array<{ companyId?: number }> }>(`/api/v3/io/users`, {
+            params: { email },
+        });
+        const b2bUser = usersRes.data?.data?.[0];
+        const companyId = b2bUser?.companyId;
+
+        if (!companyId) {
+            return res.json({ machines: [] });
+        }
+
+        // Step 2 — fetch company extra fields
+        const companyRes = await b2bClient.get<{
+            data: { extraFields?: Array<{ fieldName: string; fieldValue: string }> };
+        }>(`/api/v3/io/companies/${companyId}`);
+
+        const extraFields = companyRes.data?.data?.extraFields ?? [];
+        const machinesField = extraFields.find(f => f.fieldName.toLowerCase() === 'machines');
+
+        if (!machinesField) {
+            return res.json({ machines: [] });
+        }
+
+        let rawMachines: B2BMachine[];
         try {
-            rawMachines = JSON.parse(rmField.value) as RawMachine[];
+            const sanitized = machinesField.fieldValue.replace(/,(\s*[}\]])/g, '$1');
+            const parsed = JSON.parse(sanitized);
+            rawMachines = Array.isArray(parsed) ? parsed : (parsed?.machines ?? []);
         } catch {
-            logger.error(`customer ${customerId}: registered_machines metafield is not valid JSON`);
+            logger.error(`customer ${customerId}: company ${companyId} machines extra field is not valid JSON`);
             return res.json({ machines: [] });
         }
 
@@ -470,23 +309,36 @@ router.get('/customer/:customerId/machines', async (req: Request, res: Response,
             return res.json({ machines: [] });
         }
 
+        const seenSerials = new Set<string>();
         const machines = rawMachines
             .filter(m => m.status !== 'Inactive')
+            .filter(m => {
+                const serial = m.serialNo ?? '';
+                if (!serial || seenSerials.has(serial)) return false;
+                seenSerials.add(serial);
+                return true;
+            })
             .map(m => {
-                const cat = matchCategory(m.model, categories);
+                const pubNos = m.publicationNos ?? [];
                 return {
-                    serial: m.serial ?? null,
-                    model: m.model ?? null,
-                    installDate: m.install_date ?? null,
+                    serial: m.serialNo ?? null,
+                    model: m.modelNo ?? null,
+                    installDate: m.installDate || 'pending',
                     status: m.status ?? null,
-                    imageUrl: cat ? cat.imageUrl : '',
-                    pubNos: cat ? cat.pubNos : [],
-                    machineType: cat ? cat.machineType : null,
-                    categoryId: cat ? cat.categoryId : null,
+                    pubNos,
+                    hasPartsBook: pubNos.length > 0,
                 };
             });
 
-        return res.json({ machines });
+        const total = machines.length;
+        const totalPages = Math.ceil(total / limit);
+        const paginated = machines.slice((page - 1) * limit, page * limit);
+
+        return res.json({
+            count: total,
+            pagination: { page, limit, totalPages },
+            machines: paginated,
+        });
     } catch (err) {
         return next(err);
     }
@@ -503,7 +355,6 @@ router.get('/parts-book/machine/verify', (req: Request, res: Response, next: Nex
         verified: true,
         model: 'LU300-M',
         serialNo: String(serialNo),
-        stockCondition: 'Active',
     });
 });
 

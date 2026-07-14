@@ -1,5 +1,4 @@
-import crypto from 'crypto';
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import morgan from 'morgan';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -7,8 +6,13 @@ import session from 'express-session';
 import config from './config';
 import routes from './routes';
 import errorHandler from './middleware/errorHandler';
+import { NotFoundError } from './middleware/errors';
 
 const app = express();
+
+if (config.trustProxy) {
+    app.set('trust proxy', 1);
+}
 
 app.use(helmet());
 app.use(morgan('dev'));
@@ -29,7 +33,7 @@ app.use(express.json());
 
 app.use(
     session({
-        secret: config.sessionSecret || crypto.randomBytes(32).toString('hex'),
+        secret: config.sessionSecret ?? '',
         resave: false,
         saveUninitialized: false,
         cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, sameSite: 'lax' },
@@ -37,6 +41,7 @@ app.use(
 );
 
 app.use(routes);
+app.use((_req: Request, _res: Response, next: NextFunction) => next(new NotFoundError()));
 app.use(errorHandler);
 
 export default app;

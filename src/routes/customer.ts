@@ -13,13 +13,6 @@ const RECENT_SEARCHES_LIMIT = 3;
 // Types
 // ---------------------------------------------------------------------------
 
-interface RawMachine {
-    serial?: string;
-    model?: string;
-    install_date?: string;
-    status?: string;
-}
-
 interface Machine {
     model: string;
     serial: string;
@@ -29,7 +22,6 @@ interface Machine {
 }
 
 interface OkumaMetafields {
-    registered_machines?: string;
     registered_customers?: string;
     dealer_id?: string;
     last_viewed_machine?: string; // serial of the last explicitly selected machine
@@ -53,6 +45,21 @@ interface BcMetafieldRecord {
     key: string;
     value: string;
     namespace: string;
+}
+
+interface B2BCompanyExtraField {
+    fieldName: string;
+    fieldValue: string | null;
+}
+
+interface B2BCompany {
+    companyName: string | null;
+    addressLine1: string | null;
+    city: string | null;
+    state: string | null;
+    zipCode: string | null;
+    country: string | null;
+    extraFields: B2BCompanyExtraField[];
 }
 
 interface MachineSessionState {
@@ -141,6 +148,90 @@ async function fetchCustomerProfile(customerId: string): Promise<BcCustomer | nu
     }
 }
 
+interface B2BMachineRecord {
+    modelNo?: string;
+    serialNo?: string;
+    publicationNos?: string[];
+    installDate?: string;
+    status?: string;
+}
+
+/**
+ * Fetch machines from the B2B company Machines extra field.
+ * Resolves: BC email → B2B user → companyId → company extraFields → Machines JSON.
+ * Returns an empty array on any lookup failure.
+ */
+async function fetchB2BMachines(email: string): Promise<Machine[]> {
+    try {
+        const usersRes = await b2bClient.get<{ data: Array<{ companyId?: number }> }>('/api/v3/io/users', {
+            params: { email },
+        });
+        const companyId = usersRes.data?.data?.[0]?.companyId;
+        if (!companyId) return [];
+
+        const companyRes = await b2bClient.get<{
+            data: { extraFields?: Array<{ fieldName: string; fieldValue: string }> };
+        }>(`/api/v3/io/companies/${companyId}`);
+        const machinesField = (companyRes.data?.data?.extraFields ?? []).find(
+            f => f.fieldName.toLowerCase() === 'machines'
+        );
+        if (!machinesField) return [];
+
+        let raw: B2BMachineRecord[];
+        try {
+            const sanitized = machinesField.fieldValue.replace(/,(\s*[}\]])/g, '$1');
+            const parsed = JSON.parse(sanitized);
+            raw = Array.isArray(parsed) ? parsed : (parsed?.machines ?? []);
+        } catch {
+            logger.warn(`fetchB2BMachines: Machines field for company ${companyId} is not valid JSON`);
+            return [];
+        }
+
+        const seenSerials = new Set<string>();
+        return raw
+            .filter(m => m.status !== 'Inactive')
+            .filter(m => {
+                const serial = m.serialNo ?? '';
+                if (!serial || seenSerials.has(serial)) return false;
+                seenSerials.add(serial);
+                return true;
+            })
+            .map(m => ({
+                model: m.modelNo ?? '',
+                serial: m.serialNo ?? '',
+                display: `${m.modelNo ?? ''} ${m.serialNo ?? ''}`.trim(),
+                installDate: m.installDate || 'pending',
+                status: m.status ?? null,
+            }))
+            .sort((a, b) => {
+                const cmp = a.model.localeCompare(b.model);
+                return cmp !== 0 ? cmp : a.serial.localeCompare(b.serial);
+            });
+    } catch (err) {
+        logger.warn(`fetchB2BMachines: ${(err as Error).message}`);
+        return [];
+    }
+}
+
+/**
+ * Fetch job title from BC customer form field values.
+ * BC OOTB: GET /v3/customers/form-field-values?customer_id:in=:customerId
+ * Matches any field whose name normalises to "jobtitle".
+ */
+async function fetchCustomerJobTitle(customerId: string): Promise<string | null> {
+    try {
+        const res = await bcClient.get<{ data: Array<{ name: string; value: string }> }>(
+            '/v3/customers/form-field-values',
+            { params: { 'customer_id:in': customerId } }
+        );
+        const field = (res.data?.data ?? []).find(f => f.name?.toLowerCase().replace(/[\s_-]/g, '') === 'jobtitle');
+        return field?.value ?? null;
+    } catch (err) {
+        logger.warn(`fetchCustomerJobTitle ${customerId}: ${(err as Error).message}`);
+        return null;
+    }
+}
+
 /**
  * Fetch a customer record by ID.
  * Returns company name, or falls back to first + last name.
@@ -171,35 +262,6 @@ async function fetchCustomerGroupName(groupId: number): Promise<string | null> {
         logger.warn(`fetchCustomerGroupName ${groupId}: ${(err as Error).message}`);
         return null;
     }
-}
-
-/**
- * Parse and normalise the registered_machines metafield value.
- * Filters inactive machines, adds display string, sorts alphabetically.
- */
-function parseMachines(raw: string | undefined): Machine[] {
-    if (!raw) return [];
-    let list: RawMachine[];
-    try {
-        list = JSON.parse(raw) as RawMachine[];
-    } catch {
-        return [];
-    }
-    if (!Array.isArray(list)) return [];
-
-    return list
-        .filter(m => m.status !== 'Inactive')
-        .map(m => ({
-            model: m.model ?? '',
-            serial: m.serial ?? '',
-            display: `${m.model ?? ''} ${m.serial ?? ''}`.trim(),
-            installDate: m.install_date ?? null,
-            status: m.status ?? null,
-        }))
-        .sort((a, b) => {
-            const cmp = a.model.localeCompare(b.model);
-            return cmp !== 0 ? cmp : a.serial.localeCompare(b.serial);
-        });
 }
 
 /**
@@ -371,7 +433,7 @@ router.get('/customer/:customerId/distributor', async (req: Request<{ customerId
 /**
  * GET /customer/:customerId/machines
  *
- * Returns assigned machines (model + serial) from the registered_machines metafield.
+ * Returns assigned machines from the B2B company Machines extra field.
  *
  * Response: { count: number, machines: [{ model, serial, display, installDate, status }] }
  */
@@ -383,8 +445,8 @@ router.get('/customer/:customerId/machines', async (req: Request<{ customerId: s
     }
 
     try {
-        const meta = await fetchOkumaMetafields(customerId);
-        const machines = parseMachines(meta.registered_machines);
+        const profile = await fetchCustomerProfile(customerId);
+        const machines = profile?.email ? await fetchB2BMachines(profile.email) : [];
         return res.json({ count: machines.length, machines });
     } catch (err) {
         logger.error(`customer ${customerId}: machines fetch failed: ${(err as Error).message}`);
@@ -420,14 +482,20 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
     }
 
     try {
-        const [meta, profile] = await Promise.all([fetchOkumaMetafields(customerId), fetchCustomerProfile(customerId)]);
+        const [meta, profile, jobTitle] = await Promise.all([
+            fetchOkumaMetafields(customerId),
+            fetchCustomerProfile(customerId),
+            fetchCustomerJobTitle(customerId),
+        ]);
 
         if (meta.registered_customers !== undefined) {
             return res.json({ isDealer: true });
         }
 
-        const machines = parseMachines(meta.registered_machines);
-        const dealerName = profile?.customer_group_id ? await fetchCustomerGroupName(profile.customer_group_id) : null;
+        const [machines, dealerName] = await Promise.all([
+            profile?.email ? fetchB2BMachines(profile.email) : Promise.resolve([]),
+            profile?.customer_group_id ? fetchCustomerGroupName(profile.customer_group_id) : Promise.resolve(null),
+        ]);
 
         // readSessionState never mutates req.session — avoids a store write on every GET
         const sessionState = readSessionState(req, customerId);
@@ -448,6 +516,7 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
                       email: profile.email,
                       company: profile.company || null,
                       phone: profile.phone || null,
+                      jobTitle,
                   }
                 : null,
             dealerName,
@@ -484,8 +553,8 @@ router.post('/customer/:customerId/machine/select', async (req: Request<{ custom
     }
 
     try {
-        const meta = await fetchOkumaMetafields(customerId);
-        const machines = parseMachines(meta.registered_machines);
+        const [meta, profile] = await Promise.all([fetchOkumaMetafields(customerId), fetchCustomerProfile(customerId)]);
+        const machines = profile?.email ? await fetchB2BMachines(profile.email) : [];
         const machine = machines.find(m => m.serial === serial.trim() && (model ? m.model === model.trim() : true));
 
         if (!machine) {
@@ -700,18 +769,17 @@ router.get(
             }
 
             // Call 2 — resolve company details from B3
-            const companyRes = await b2bClient.get(`/api/v3/io/companies/${companyId}`);
+            const companyRes = await b2bClient.get<{ data: B2BCompany }>(`/api/v3/io/companies/${companyId}`);
             const company = companyRes.data?.data;
 
             if (!company) {
                 return res.status(404).json({ error: 'Company not found.' });
             }
 
-            const accountNumber =
-                (company.extraFields ?? []).find((f: any) => f.fieldName === 'Account Number')?.fieldValue ?? null;
+            const accountNumber = company.extraFields.find(f => f.fieldName === 'Account Number')?.fieldValue ?? null;
 
             const addressParts = [company.addressLine1, company.city, company.state, company.zipCode, company.country]
-                .map((p: string) => (p ?? '').trim())
+                .map(p => (p ?? '').trim())
                 .filter(Boolean);
 
             return res.json({
@@ -728,16 +796,17 @@ router.get(
                     formatted: addressParts.join(', '),
                 },
             });
-        } catch (err: any) {
+        } catch (err) {
             // Fix #3: map upstream B2B 404s to 404 instead of 500
-            if (err?.response?.status === 404) {
+            if ((err as { response?: { status?: number } })?.response?.status === 404) {
                 return res.status(404).json({ error: 'Customer or company not found.' });
             }
-            logger.error(`customer ${customerId}: companyProfile failed: ${err?.message ?? 'Unknown error'}`);
+            logger.error(
+                `customer ${customerId}: companyProfile failed: ${(err as Error)?.message ?? 'Unknown error'}`
+            );
             return res.status(500).json({ error: 'Could not load company profile.' });
         }
     }
 );
-
 
 export default router;

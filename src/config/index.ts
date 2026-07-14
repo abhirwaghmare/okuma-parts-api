@@ -1,22 +1,24 @@
 import path from 'path';
 import dotenv from 'dotenv';
 
-// Resolves to app/.env from both app/src/config/ (tsx dev) and app/dist/config/ (compiled)
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+// APP_ENV selects the env file: dev → .env.dev, qa → .env.qa, unset → .env
+const envSuffix = process.env.APP_ENV ? `.${process.env.APP_ENV}` : '';
+dotenv.config({ path: path.resolve(__dirname, `../../.env${envSuffix}`) });
 
 interface BcConfig {
     clientId: string | undefined;
     clientSecret: string | undefined;
     accessToken: string | undefined;
+    b2bAuthToken: string | undefined;
     storeHash: string | undefined;
     appCallbackUrl: string | undefined;
     apiBaseUrl: string;
     b2bApiBaseUrl: string;
-    b2bAuthToken: string | undefined;
 }
 
 interface AppConfig {
     port: number;
+    trustProxy: boolean;
     sessionSecret: string | undefined;
     bc: BcConfig;
     partsBook: {
@@ -30,19 +32,17 @@ interface AppConfig {
 
 const config: AppConfig = {
     port: parseInt(process.env.PORT || '3000', 10),
+    trustProxy: process.env.TRUST_PROXY === 'true',
     sessionSecret: process.env.SESSION_SECRET,
     bc: {
         clientId: process.env.BC_CLIENT_ID,
         clientSecret: process.env.BC_CLIENT_SECRET,
         accessToken: process.env.BC_ACCESS_TOKEN,
+        b2bAuthToken: process.env.B2B_AUTH_TOKEN ?? process.env.BC_ACCESS_TOKEN,
         storeHash: process.env.BC_STORE_HASH,
         appCallbackUrl: process.env.BC_APP_CALLBACK_URL,
         apiBaseUrl: `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}`,
         b2bApiBaseUrl: 'https://api-b2b.bigcommerce.com',
-        b2bAuthToken: process.env.B2B_AUTH_TOKEN ?? process.env.BC_ACCESS_TOKEN,
-
-        
-
     },
     partsBook: {
         cdnBaseUrl: process.env.PARTS_BOOK_CDN_BASE_URL,
@@ -56,7 +56,7 @@ const config: AppConfig = {
 const required = ['BC_ACCESS_TOKEN', 'BC_STORE_HASH', 'SESSION_SECRET', 'PARTS_BOOK_CDN_BASE_URL'];
 const missing = required.filter(key => !process.env[key]);
 if (missing.length) {
-    console.warn(`Missing environment variables: ${missing.join(', ')}`);
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
 }
 
 export default config;
