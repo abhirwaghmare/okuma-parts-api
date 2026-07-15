@@ -24,11 +24,6 @@ const STATUS_MAP: Record<number, string> = {
 
 const OPEN_STATUS_IDS = new Set([1, 7, 8, 9, 11, 12]);
 
-function formatOrderNumber(orderId: number, dateCreated: string): string {
-    const year = new Date(dateCreated).getFullYear();
-    return `OKU-${year}-${String(orderId).padStart(5, '0')}`;
-}
-
 const METAFIELD_NAMESPACE = 'okuma';
 const METAFIELD_KEY = 'dealer_customer_ids';
 const CACHE_TTL_HOURS = 24;
@@ -200,7 +195,7 @@ router.get('/recent-orders', async (req: Request, res: Response) => {
 
         const recentOrders = allOrders.slice(0, limit).map(o => ({
             orderId: o.id,
-            orderNumber: formatOrderNumber(o.id, o.date_created),
+            orderNumber: String(o.id),
             date: o.date_created,
             orderedFor: o.customer_id === dealerId ? 'Self' : (customerNameMap[o.customer_id] ?? 'Customer'),
             itemsTotal: o.items_total ?? 0,
