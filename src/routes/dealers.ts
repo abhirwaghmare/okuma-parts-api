@@ -470,9 +470,8 @@ router.get('/dealers/context', async (req, res) => {
             return res.status(404).json({ error: 'No customer found for the supplied email.' });
         }
 
-        // -- 2. Resolve customer IDs and company machines from B2B hierarchy --
-        const { customerIds, totalCustomerIds, truncated, machinesByCustomerId } =
-            await fetchCustomerIdsFromHierarchy(emailNorm);
+        // -- 2. Resolve customer IDs from B2B hierarchy --
+        const { customerIds, totalCustomerIds, truncated } = await fetchCustomerIdsFromHierarchy(emailNorm);
 
         if (customerIds.length === 0) {
             return res.json({
@@ -482,28 +481,16 @@ router.get('/dealers/context', async (req, res) => {
             });
         }
 
-        // -- 3. Enrich: customer profiles and groups in parallel (machines already resolved) --
-        const [customersRes, groupMap] = await Promise.all([
-            bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-                params: { 'id:in': customerIds.join(','), limit: BC_CUSTOMER_FILTER_LIMIT },
-            }),
-            fetchCustomerGroupMap(),
-        ]);
+        // -- 3. Fetch customer profiles to get company names --
+        const customersRes = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
+            params: { 'id:in': customerIds.join(','), limit: BC_CUSTOMER_FILTER_LIMIT },
+        });
 
         const bcCustomers = customersRes.data?.data ?? [];
 
         const customers = bcCustomers.map(c => ({
             id: c.id,
-            email: c.email,
-            firstName: c.first_name,
-            lastName: c.last_name,
-            customerGroup: {
-                id: c.customer_group_id ?? null,
-                name: c.customer_group_id ? (groupMap[c.customer_group_id] ?? null) : null,
-            },
-            dateCreated: c.date_created ?? null,
-            dateModified: c.date_modified ?? null,
-            registeredMachines: machinesByCustomerId[c.id] ?? [],
+            companyName: c.company || null,
         }));
 
         return res.json({
