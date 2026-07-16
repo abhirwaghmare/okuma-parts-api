@@ -1,8 +1,10 @@
+import axios from 'axios';
 import { Router, Request, Response } from 'express';
 import bcClient from '../services/bigcommerce';
 import b2bClient from '../services/b2b';
 import logger from '../config/logger';
 import authenticateBCToken from '../middleware/auth';
+import config from '../config';
 
 const router = Router();
 
@@ -852,6 +854,61 @@ router.get('/customer/companyProfile', authenticateBCToken, async (req: Request,
         return res.status(500).json({ error: 'Could not load company profile.' });
     }
 });
+
+/**
+ * GET /customer/company/:companyId/default-addresses
+ *
+ * Proxy for the B2B OOTB endpoint that returns default billing/shipping addresses
+ * for a company. FE cannot call this directly due to CORS; the backend forwards
+ * the customer's own B2B JWT so no server-side secret is exposed to the browser.
+ *
+ * The caller must supply the B2B storefront token (obtained from
+ * GET /v1/customer/:customerId/b2b-token) as `Authorization: Bearer <token>`.
+ *
+ * Response: the raw JSON from https://api-b2b.bigcommerce.com/api/v2/companies/{companyId}/default-addresses
+ */
+router.get(
+    '/customer/company/:companyId/default-addresses',
+    async (req: Request<{ companyId: string }>, res: Response) => {
+        const { companyId } = req.params;
+
+        if (!companyId || !/^\d+$/.test(companyId)) {
+            return res.status(400).json({ error: 'Invalid companyId.' });
+        }
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res
+                .status(401)
+                .json({ error: 'Missing or invalid Authorization header. Expected: Bearer <b2b-token>.' });
+        }
+
+        try {
+            const ootbRes = await axios.get(
+                `${config.bc.b2bApiBaseUrl}/api/v2/companies/${companyId}/default-addresses`,
+                {
+                    headers: {
+                        Authorization: authHeader,
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                    },
+                    timeout: 10000,
+                }
+            );
+            return res.json(ootbRes.data);
+        } catch (err) {
+            const status = (err as { response?: { status?: number } })?.response?.status;
+            if (status === 401 || status === 403) {
+                return res.status(status).json({ error: 'B2B token invalid or expired.' });
+            }
+            if (status === 404) {
+                return res.status(404).json({ error: 'Company not found.' });
+            }
+            logger.error(`company ${companyId}: default-addresses fetch failed: ${(err as Error).message}`);
+            return res.status(500).json({ error: 'Could not load default addresses.' });
+        }
+    }
+);
 
 // GET /v1/customer/:customerId/b2b-token
 // Returns a B2B storefront customer token for use with the B2B Storefront GraphQL API.
