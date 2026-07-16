@@ -184,7 +184,7 @@ router.get('/recent-orders', async (req: Request, res: Response) => {
 
         const customerNameMap: Record<number, string> = {};
         ((customersRes.data.data as BcCustomerRow[]) ?? []).forEach(c => {
-            customerNameMap[c.id] = `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Customer';
+            customerNameMap[c.id] = c.company || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Customer';
         });
 
         const allOrders = orderResults.flat().filter(Boolean) as BcOrder[];
