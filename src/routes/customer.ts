@@ -60,6 +60,8 @@ interface Machine {
     display: string;
     installDate: string | null;
     status: string | null;
+    pubNos: string[];
+    hasPartsBook: boolean;
 }
 
 interface OkumaMetafields {
@@ -247,13 +249,18 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
         }
 
         const machines = afterSerial
-            .map(m => ({
-                model: m.modelNo ?? '',
-                serial: m.serialNo ?? '',
-                display: `${m.modelNo ?? ''} ${m.serialNo ?? ''}`.trim(),
-                installDate: m.installDate || 'pending',
-                status: m.status ?? null,
-            }))
+            .map(m => {
+                const pubNos = m.publicationNos ?? [];
+                return {
+                    model: m.modelNo ?? '',
+                    serial: m.serialNo ?? '',
+                    display: `${m.modelNo ?? ''} ${m.serialNo ?? ''}`.trim(),
+                    installDate: m.installDate || 'pending',
+                    status: m.status ?? null,
+                    pubNos,
+                    hasPartsBook: pubNos.length > 0,
+                };
+            })
             .sort((a, b) => {
                 const cmp = a.model.localeCompare(b.model);
                 return cmp !== 0 ? cmp : a.serial.localeCompare(b.serial);
