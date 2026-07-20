@@ -194,6 +194,7 @@ interface B2BMachinesResult {
     machines: Machine[];
     companyId: number | null;
     accountNumber: string | null;
+    relationshipType: string | null;
 }
 
 async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
@@ -202,7 +203,7 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
             params: { email },
         });
         const companyId = usersRes.data?.data?.[0]?.companyId ?? null;
-        if (!companyId) return { machines: [], companyId: null, accountNumber: null };
+        if (!companyId) return { machines: [], companyId: null, accountNumber: null, relationshipType: null };
 
         const companyRes = await b2bClient.get<{
             data: { extraFields?: Array<{ fieldName: string; fieldValue: string }> };
@@ -210,7 +211,9 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
         const extraFields = companyRes.data?.data?.extraFields ?? [];
         const machinesField = extraFields.find(f => f.fieldName.toLowerCase() === 'machines');
         const accountNumber = extraFields.find(f => f.fieldName.toLowerCase() === 'account number')?.fieldValue ?? null;
-        if (!machinesField) return { machines: [], companyId, accountNumber };
+        const relationshipType =
+            extraFields.find(f => f.fieldName.toLowerCase() === 'relationship type')?.fieldValue ?? null;
+        if (!machinesField) return { machines: [], companyId, accountNumber, relationshipType };
 
         let raw: B2BMachineRecord[];
         try {
@@ -219,7 +222,7 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
             raw = Array.isArray(parsed) ? parsed : (parsed?.machines ?? []);
         } catch {
             logger.warn(`fetchB2BMachines: Machines field for company ${companyId} is not valid JSON`);
-            return { machines: [], companyId, accountNumber };
+            return { machines: [], companyId, accountNumber, relationshipType };
         }
 
         logger.debug(
@@ -265,10 +268,10 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
                 const cmp = a.model.localeCompare(b.model);
                 return cmp !== 0 ? cmp : a.serial.localeCompare(b.serial);
             });
-        return { machines, companyId, accountNumber };
+        return { machines, companyId, accountNumber, relationshipType };
     } catch (err) {
         logger.warn(`fetchB2BMachines: ${(err as Error).message}`);
-        return { machines: [], companyId: null, accountNumber: null };
+        return { machines: [], companyId: null, accountNumber: null, relationshipType: null };
     }
 }
 
@@ -532,10 +535,15 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
         const [b2bResult, dealerName] = await Promise.all([
             profile?.email
                 ? fetchB2BMachines(profile.email)
-                : Promise.resolve({ machines: [] as Machine[], companyId: null, accountNumber: null }),
+                : Promise.resolve({
+                      machines: [] as Machine[],
+                      companyId: null,
+                      accountNumber: null,
+                      relationshipType: null,
+                  }),
             profile?.customer_group_id ? fetchCustomerGroupName(profile.customer_group_id) : Promise.resolve(null),
         ]);
-        const { machines, companyId, accountNumber } = b2bResult;
+        const { machines, companyId, accountNumber, relationshipType } = b2bResult;
 
         // readSessionState never mutates req.session — avoids a store write on every GET
         const sessionState = readSessionState(req, customerId);
@@ -556,6 +564,7 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
                       email: profile.email,
                       company: profile.company || null,
                       companyId,
+                      relationshipType,
                       accountNumber,
                       phone: profile.phone || null,
                       jobTitle,
