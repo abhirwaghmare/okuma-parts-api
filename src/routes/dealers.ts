@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import bcClient from '../services/bigcommerce';
 import b2bClient from '../services/b2b';
+import { fetchB2BUserByEmail, buildExtraFieldsMap, upsertB2BUserExtraField } from '../services/b2b-user';
 import logger from '../config/logger';
 
 const router = Router();
@@ -8,8 +9,6 @@ const router = Router();
 const GROUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes — groups change rarely
 const B2B_PAGE_LIMIT = 100;
 const BC_CUSTOMER_FILTER_LIMIT = 250;
-const RECENT_SEARCH_NAMESPACE = 'okuma';
-const RECENT_SEARCH_KEY = 'recent_customer_searches';
 const RECENT_SEARCH_LIMIT = 3;
 
 // ---------------------------------------------------------------------------
@@ -43,16 +42,6 @@ interface BcCustomer {
     customer_group_id: number | null;
     date_created: string | null;
     date_modified: string | null;
-}
-
-interface BcMetafield {
-    id: number;
-    key: string;
-    value: string;
-    namespace: string;
-    permission_set: string;
-    resource_id: number;
-    resource_type: string;
 }
 
 interface RecentCustomerSearch {
@@ -384,41 +373,32 @@ async function fetchB2BCompaniesByGroupName(groupName: string): Promise<B2BCompa
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch the dealer's recent_customer_searches metafield.
- * Returns the raw BC metafield record, or null when it does not yet exist.
- */
-async function fetchRecentSearchMetafield(dealerId: string): Promise<BcMetafield | null> {
-    const res = await bcClient.get<{ data: BcMetafield[] }>(`/v3/customers/${dealerId}/metafields`, {
-        params: { namespace: RECENT_SEARCH_NAMESPACE, key: RECENT_SEARCH_KEY },
-    });
-    return res.data?.data?.[0] ?? null;
-}
-
-/**
  * Persist a new recent customer search for the dealer.
  *
  * - De-duplicates by customerId (a repeated search moves the entry to the front with an updated timestamp).
  * - Keeps at most RECENT_SEARCH_LIMIT entries, ordered most-recent first.
- * - Creates the metafield on first call; updates it on subsequent calls.
+ * - Reads and writes the recent_customer_searches B2B user extra field.
  *
- * BC OOTB calls:
- *   GET /v3/customers/:dealerId/metafields?namespace=okuma&key=recent_customer_searches
- *   POST /v3/customers/:dealerId/metafields  (first call)
- *   PUT  /v3/customers/:dealerId/metafields/:id  (subsequent calls)
+ * B2B calls:
+ *   GET /api/v3/io/users?email=<dealerEmail>            → B2B user record + extraFields
+ *   PUT /api/v3/io/users/<userId>                       → updated extra fields
  */
 async function upsertRecentCustomerSearches(
-    dealerId: string,
+    dealerEmail: string,
     newEntry: RecentCustomerSearch
 ): Promise<RecentCustomerSearch[]> {
-    const existing = await fetchRecentSearchMetafield(dealerId);
+    const b2bUser = await fetchB2BUserByEmail(dealerEmail);
+    const extraFieldsMap = buildExtraFieldsMap(b2bUser?.extraFields);
 
     let current: RecentCustomerSearch[] = [];
-    if (existing) {
+    if (extraFieldsMap.recent_customer_searches) {
         try {
-            const parsed = JSON.parse(existing.value);
+            const parsed = JSON.parse(extraFieldsMap.recent_customer_searches);
             if (Array.isArray(parsed)) current = parsed as RecentCustomerSearch[];
         } catch {
-            logger.warn(`dealer ${dealerId}: recent_customer_searches metafield contained invalid JSON — resetting`);
+            logger.warn(
+                `dealer ${dealerEmail}: recent_customer_searches extra field contained invalid JSON — resetting`
+            );
         }
     }
 
@@ -427,17 +407,8 @@ async function upsertRecentCustomerSearches(
         RECENT_SEARCH_LIMIT
     );
 
-    const value = JSON.stringify(updated);
-
-    if (existing) {
-        await bcClient.put(`/v3/customers/${dealerId}/metafields/${existing.id}`, { value });
-    } else {
-        await bcClient.post(`/v3/customers/${dealerId}/metafields`, {
-            permission_set: 'write_and_sf_access',
-            namespace: RECENT_SEARCH_NAMESPACE,
-            key: RECENT_SEARCH_KEY,
-            value,
-        });
+    if (b2bUser) {
+        await upsertB2BUserExtraField(b2bUser, 'recent_customer_searches', JSON.stringify(updated));
     }
 
     return updated;
@@ -664,7 +635,7 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
  * POST /v1/api/dealers/:dealerId/recent-customer-search
  *
  * Records a customer the dealer selected/searched, storing the last 3 unique
- * entries (most-recent first) in the dealer's BC customer metafield.
+ * entries (most-recent first) in the dealer's B2B user extra field.
  *
  * Body:
  * {
@@ -680,10 +651,10 @@ router.get('/dealers/:dealerId/customers', async (req, res) => {
  *   ]
  * }
  *
- * BC OOTB calls:
- *   GET  /v3/customers/:dealerId/metafields?namespace=okuma&key=recent_customer_searches
- *   POST /v3/customers/:dealerId/metafields   (first call per dealer)
- *   PUT  /v3/customers/:dealerId/metafields/:id  (subsequent calls)
+ * B2B calls:
+ *   GET /v3/customers?id:in=<dealerId>                                    → dealer email
+ *   GET /api/v3/io/users?email=<email>                                    → B2B user + extraFields
+ *   PUT /api/v3/io/users/<userId>                                         → updated extra fields
  */
 router.post('/dealers/:dealerId/recent-customer-search', async (req, res) => {
     const { dealerId } = req.params;
@@ -722,7 +693,16 @@ router.post('/dealers/:dealerId/recent-customer-search', async (req, res) => {
     };
 
     try {
-        await upsertRecentCustomerSearches(dealerId, newEntry);
+        // Resolve dealer email (needed for B2B user lookup)
+        const dealerRes = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
+            params: { 'id:in': dealerId },
+        });
+        const dealerRecord = dealerRes.data?.data?.[0] ?? null;
+        if (!dealerRecord) {
+            return res.status(404).json({ error: 'Dealer not found.' });
+        }
+
+        await upsertRecentCustomerSearches(dealerRecord.email, newEntry);
         return res.status(200).json({ message: 'Recent customer search saved successfully.' });
     } catch (err) {
         logger.error(`dealer ${dealerId}: recent-customer-search POST failed: ${(err as Error).message}`);

@@ -16,12 +16,20 @@ interface BcSearchProduct {
     name: string;
     description: string;
     availability: string;
+    inventory_tracking: 'none' | 'product' | 'variant';
+    inventory_level: number;
 }
 
 interface BcPricingItem {
     product_id: number;
     price: { as_entered: number };
     calculated_price: { as_entered: number };
+    sale_price: { as_entered: number } | null;
+}
+
+interface PricingResult {
+    unitPrice: number | null;
+    originalPrice: number | null;
 }
 
 interface PartResult {
@@ -30,7 +38,10 @@ interface PartResult {
     partName: string;
     description: string;
     unitPrice: number | null;
+    originalPrice: number | null;
     status: string;
+    stockStatus: 'instock' | 'backorder';
+    shippingDetails: string;
 }
 
 /**
@@ -40,7 +51,10 @@ interface PartResult {
  * only channel_id + currency_code are mandatory) when the customer has none,
  * so pricing still resolves to base price instead of failing outright.
  */
-async function fetchPricing(productIds: number[], customerGroupId: number | null): Promise<Record<number, number>> {
+async function fetchPricing(
+    productIds: number[],
+    customerGroupId: number | null
+): Promise<Record<number, PricingResult>> {
     const payload: Record<string, unknown> = {
         channel_id: config.bc.channelId,
         currency_code: CURRENCY_CODE,
@@ -49,9 +63,15 @@ async function fetchPricing(productIds: number[], customerGroupId: number | null
     if (customerGroupId !== null) payload.customer_group_id = customerGroupId;
 
     const res = await bcClient.post<{ data: BcPricingItem[] }>('/v3/pricing/products', payload);
-    const priceByProductId: Record<number, number> = {};
+    const priceByProductId: Record<number, PricingResult> = {};
     (res.data?.data ?? []).forEach(item => {
-        priceByProductId[item.product_id] = item.calculated_price?.as_entered ?? item.price?.as_entered;
+        const listPrice = item.price?.as_entered ?? null;
+        const finalPrice = item.calculated_price?.as_entered ?? listPrice;
+        // originalPrice is only meaningful when it differs from the final price
+        priceByProductId[item.product_id] = {
+            unitPrice: finalPrice,
+            originalPrice: finalPrice !== listPrice ? listPrice : null,
+        };
     });
     return priceByProductId;
 }
@@ -78,7 +98,7 @@ async function fetchPricing(productIds: number[], customerGroupId: number | null
  *   page       — optional, default 1, must be a positive integer
  *   limit      — optional, default 50, must be a positive integer, capped at 100
  *
- * Response: { total, page, limit, results: [{ productId, partNumber, partName, description, unitPrice, status }] }
+ * Response: { total, page, limit, results: [{ productId, partNumber, partName, description, unitPrice, originalPrice, status, stockStatus, shippingDetails }] }
  */
 router.get('/parts/search', async (req: Request, res: Response) => {
     const { q, customerId, sort, page = '1', limit = String(DEFAULT_LIMIT) } = req.query as Record<string, string>;
@@ -135,14 +155,30 @@ router.get('/parts/search', async (req: Request, res: Response) => {
                   )
                 : {};
 
-        const results: PartResult[] = products.map(p => ({
-            productId: p.id,
-            partNumber: p.sku,
-            partName: p.name,
-            description: p.description || '',
-            unitPrice: priceByProductId[p.id] ?? null,
-            status: p.availability,
-        }));
+        const results: PartResult[] = products.map(p => {
+            let inStock: boolean;
+            if (p.availability !== 'available') {
+                inStock = false;
+            } else if (p.inventory_tracking === 'none') {
+                inStock = true;
+            } else {
+                inStock = p.inventory_level > 0;
+            }
+            const stockStatus = inStock ? 'instock' : 'backorder';
+            const shippingDetails = inStock ? 'Ships in 1-3 business days' : 'Will be shipped once available';
+            const pricing = priceByProductId[p.id] ?? { unitPrice: null, originalPrice: null };
+            return {
+                productId: p.id,
+                partNumber: p.sku,
+                partName: p.name,
+                description: p.description || '',
+                unitPrice: pricing.unitPrice,
+                originalPrice: pricing.originalPrice,
+                status: p.availability,
+                stockStatus,
+                shippingDetails,
+            };
+        });
 
         return res.json({ total, page: pageNum, limit: limitNum, results });
     } catch (err) {

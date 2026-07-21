@@ -3,6 +3,12 @@ import { Router, Request, Response } from 'express';
 import bcClient from '../services/bigcommerce';
 import b2bClient from '../services/b2b';
 import fetchCustomerProfile, { BcCustomer } from '../services/customerProfile';
+import {
+    fetchB2BUserByEmail,
+    buildExtraFieldsMap,
+    upsertB2BUserExtraField,
+    upsertB2BUserExtraFields,
+} from '../services/b2b-user';
 import logger from '../config/logger';
 import authenticateBCToken from '../middleware/auth';
 import config from '../config';
@@ -65,23 +71,6 @@ interface Machine {
     hasPartsBook: boolean;
 }
 
-interface OkumaMetafields {
-    registered_customers?: string;
-    dealer_id?: string;
-    job_title?: string;
-    last_viewed_machine?: string; // serial of the last explicitly selected machine
-    recent_machines?: string; // JSON array of serials, most-recent first (capped at 3)
-    recent_customer_searches?: string; // JSON array of search strings, most-recent first (capped at 10)
-    _ids: Record<string, number>; // key → BC metafield record ID (not serialised to callers)
-}
-
-interface BcMetafieldRecord {
-    id: number;
-    key: string;
-    value: string;
-    namespace: string;
-}
-
 interface MachineSessionState {
     selected: string | null;
     recent: string[];
@@ -97,60 +86,6 @@ interface CustomerSearchEntry {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Fetch all okuma-namespace metafields for a customer in one BC call.
- * Retains record IDs in `_ids` so callers can skip a redundant GET on upsert.
- * BC OOTB: GET /v3/customers/:id/metafields?namespace=okuma
- */
-async function fetchOkumaMetafields(customerId: string): Promise<OkumaMetafields> {
-    const res = await bcClient.get<{ data: Array<{ id: number; key: string; value: string }> }>(
-        `/v3/customers/${customerId}/metafields`,
-        { params: { namespace: 'okuma' } }
-    );
-    const fields = res.data?.data ?? [];
-    const map: OkumaMetafields = { _ids: {} };
-    // Guard against reserved and prototype-polluting keys. Writing '_ids' would
-    // overwrite internal bookkeeping; writing '__proto__', 'constructor', or
-    // 'prototype' could mutate Object.prototype and cause hard-to-debug runtime issues.
-    const RESERVED_KEYS = new Set<string>([...Object.keys(map), '__proto__', 'constructor', 'prototype']);
-    fields.forEach(f => {
-        if (RESERVED_KEYS.has(f.key)) return;
-        (map as unknown as Record<string, string>)[f.key] = f.value;
-        map._ids[f.key] = f.id;
-    });
-    return map;
-}
-
-/**
- * Upsert a single okuma-namespace metafield on a customer.
- * When `existingId` is supplied (from a prior fetchOkumaMetafields call) the
- * redundant GET to discover the record is skipped — PUT is issued directly.
- * When omitted, falls back to GET → PUT/POST.
- */
-async function upsertOkumaMetafield(
-    customerId: string,
-    key: string,
-    value: string,
-    existingId?: number
-): Promise<void> {
-    const payload = { value, namespace: 'okuma', key, permission_set: 'read_and_sf_access' };
-
-    if (existingId !== undefined) {
-        await bcClient.put(`/v3/customers/${customerId}/metafields/${existingId}`, payload);
-        return;
-    }
-
-    const getRes = await bcClient.get<{ data: BcMetafieldRecord[] }>(`/v3/customers/${customerId}/metafields`, {
-        params: { namespace: 'okuma', key },
-    });
-    const existing = getRes.data?.data?.[0] ?? null;
-    if (existing) {
-        await bcClient.put(`/v3/customers/${customerId}/metafields/${existing.id}`, payload);
-    } else {
-        await bcClient.post(`/v3/customers/${customerId}/metafields`, payload);
-    }
-}
 
 interface B2BMachineRecord {
     modelNo?: string;
@@ -170,6 +105,7 @@ interface B2BMachinesResult {
     companyId: number | null;
     accountNumber: string | null;
     relationshipType: string | null;
+    distributorId: string | null;
 }
 
 async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
@@ -178,7 +114,8 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
             params: { email },
         });
         const companyId = usersRes.data?.data?.[0]?.companyId ?? null;
-        if (!companyId) return { machines: [], companyId: null, accountNumber: null, relationshipType: null };
+        if (!companyId)
+            return { machines: [], companyId: null, accountNumber: null, relationshipType: null, distributorId: null };
 
         const companyRes = await b2bClient.get<{
             data: { extraFields?: Array<{ fieldName: string; fieldValue: string }> };
@@ -188,7 +125,8 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
         const accountNumber = extraFields.find(f => f.fieldName.toLowerCase() === 'account number')?.fieldValue ?? null;
         const relationshipType =
             extraFields.find(f => f.fieldName.toLowerCase() === 'relationship type')?.fieldValue ?? null;
-        if (!machinesField) return { machines: [], companyId, accountNumber, relationshipType };
+        const distributorId = extraFields.find(f => f.fieldName.toLowerCase() === 'distributor id')?.fieldValue ?? null;
+        if (!machinesField) return { machines: [], companyId, accountNumber, relationshipType, distributorId };
 
         let raw: B2BMachineRecord[];
         try {
@@ -197,7 +135,7 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
             raw = Array.isArray(parsed) ? parsed : (parsed?.machines ?? []);
         } catch {
             logger.warn(`fetchB2BMachines: Machines field for company ${companyId} is not valid JSON`);
-            return { machines: [], companyId, accountNumber, relationshipType };
+            return { machines: [], companyId, accountNumber, relationshipType, distributorId };
         }
 
         logger.debug(
@@ -243,41 +181,25 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
                 const cmp = a.model.localeCompare(b.model);
                 return cmp !== 0 ? cmp : a.serial.localeCompare(b.serial);
             });
-        return { machines, companyId, accountNumber, relationshipType };
+        return { machines, companyId, accountNumber, relationshipType, distributorId };
     } catch (err) {
         logger.warn(`fetchB2BMachines: ${(err as Error).message}`);
-        return { machines: [], companyId: null, accountNumber: null, relationshipType: null };
+        return { machines: [], companyId: null, accountNumber: null, relationshipType: null, distributorId: null };
     }
 }
 
-/**
- * Fetch a customer record by ID.
- * Returns company name, or falls back to first + last name.
- */
-async function fetchCustomerName(customerId: string): Promise<{ id: number; name: string } | null> {
+/** Find a B2B company whose Account Number extra field matches the given value. */
+async function fetchDistributorByAccountNumber(
+    accountNumber: string
+): Promise<{ companyId: number; companyName: string } | null> {
     try {
-        const res = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-            params: { 'id:in': customerId },
-        });
-        const c = res.data?.data?.[0] ?? null;
-        if (!c) return null;
-        return {
-            id: c.id,
-            name: c.company || `${c.first_name} ${c.last_name}`.trim(),
-        };
+        const res = await b2bClient.get<{ data: Array<{ companyId: number; companyName: string }> }>(
+            '/api/v3/io/companies',
+            { params: { accountNumber, limit: 1 } }
+        );
+        return res.data?.data?.[0] ?? null;
     } catch (err) {
-        logger.warn(`fetchCustomerName ${customerId}: ${(err as Error).message}`);
-        return null;
-    }
-}
-
-/** Fetch a BC customer group name by ID via GET /v2/customer_groups/:id. Returns null on failure. */
-async function fetchCustomerGroupName(groupId: number): Promise<string | null> {
-    try {
-        const res = await bcClient.get<{ id: number; name: string }>(`/v2/customer_groups/${groupId}`);
-        return res.data?.name ?? null;
-    } catch (err) {
-        logger.warn(`fetchCustomerGroupName ${groupId}: ${(err as Error).message}`);
+        logger.warn(`fetchDistributorByAccountNumber ${accountNumber}: ${(err as Error).message}`);
         return null;
     }
 }
@@ -412,9 +334,10 @@ router.post(
  * GET /customer/:customerId/distributor
  *
  * Returns the distributor/dealer assigned to the customer.
- * The binding is stored as an okuma/dealer_id metafield on the customer.
+ * The binding is sourced from the "Distributor ID" extra field on the customer's B2B company,
+ * which holds the distributor's account number (string).
  *
- * Response: { dealerId: number, dealerName: string } | { dealerId: null, dealerName: null }
+ * Response: { dealerId: string, dealerName: string } | { dealerId: null, dealerName: null }
  */
 router.get('/customer/:customerId/distributor', async (req: Request<{ customerId: string }>, res: Response) => {
     const { customerId } = req.params;
@@ -424,23 +347,21 @@ router.get('/customer/:customerId/distributor', async (req: Request<{ customerId
     }
 
     try {
-        const meta = await fetchOkumaMetafields(customerId);
-
-        if (!meta.dealer_id) {
+        const profile = await fetchCustomerProfile(customerId);
+        if (!profile?.email) {
             return res.json({ dealerId: null, dealerName: null });
         }
 
-        const dealerIdNum = parseInt(meta.dealer_id, 10);
-        if (Number.isNaN(dealerIdNum)) {
-            logger.warn(`customer ${customerId}: dealer_id metafield is non-numeric: "${meta.dealer_id}"`);
+        const { distributorId } = await fetchB2BMachines(profile.email);
+        if (!distributorId) {
             return res.json({ dealerId: null, dealerName: null });
         }
 
-        const dealer = await fetchCustomerName(meta.dealer_id);
+        const distributor = await fetchDistributorByAccountNumber(distributorId);
 
         return res.json({
-            dealerId: dealer ? dealer.id : dealerIdNum,
-            dealerName: dealer ? dealer.name : null,
+            dealerId: distributorId,
+            dealerName: distributor?.companyName ?? null,
         });
     } catch (err) {
         logger.error(`customer ${customerId}: distributor lookup failed: ${(err as Error).message}`);
@@ -478,8 +399,8 @@ router.get('/customer/:customerId/machines', async (req: Request<{ customerId: s
  * Returns all data needed for the machine-selector sub-header and account
  * summary card in one response.
  *
- * Default machine priority: BC last_viewed_machine metafield → session → first alphabetically.
- * Recent machines: BC recent_machines metafield (survives logout) → session fallback, capped at 3.
+ * Default machine priority: B2B last_viewed_machine extra field → session → first alphabetically.
+ * Recent machines: B2B recent_machines extra field (survives logout) → session fallback, capped at 3.
  *
  * Response for dealer:        { isDealer: true }
  * Response for regular user:
@@ -500,14 +421,11 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
     }
 
     try {
-        const [meta, profile] = await Promise.all([fetchOkumaMetafields(customerId), fetchCustomerProfile(customerId)]);
-        const jobTitle = meta.job_title ?? null;
+        const profile = await fetchCustomerProfile(customerId);
 
-        if (meta.registered_customers !== undefined) {
-            return res.json({ isDealer: true });
-        }
-
-        const [b2bResult, dealerName] = await Promise.all([
+        // Fetch B2B user extra fields and B2B machines (company extra fields) in parallel
+        const [b2bUser, b2bResult] = await Promise.all([
+            profile?.email ? fetchB2BUserByEmail(profile.email) : Promise.resolve(null),
             profile?.email
                 ? fetchB2BMachines(profile.email)
                 : Promise.resolve({
@@ -515,16 +433,34 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
                       companyId: null,
                       accountNumber: null,
                       relationshipType: null,
+                      distributorId: null,
                   }),
-            profile?.customer_group_id ? fetchCustomerGroupName(profile.customer_group_id) : Promise.resolve(null),
         ]);
-        const { machines, companyId, accountNumber, relationshipType } = b2bResult;
+
+        const extraFieldsMap = buildExtraFieldsMap(b2bUser?.extraFields);
+        const jobTitle = extraFieldsMap.job_title ?? null;
+        const { machines, companyId, accountNumber, relationshipType, distributorId } = b2bResult;
+
+        // relationshipType from B2B company extra fields identifies account type
+        const isDealer = relationshipType?.toLowerCase() === 'distributor';
+        if (isDealer) {
+            return res.json({ isDealer: true });
+        }
+
+        // Resolve distributor name from the company whose Account Number = distributorId
+        const distributor = distributorId ? await fetchDistributorByAccountNumber(distributorId) : null;
+        const dealerId = distributorId ?? null;
+        const dealerName = distributor?.companyName ?? null;
 
         // readSessionState never mutates req.session — avoids a store write on every GET
         const sessionState = readSessionState(req, customerId);
-        const selectedMachine = resolveDefaultMachine(machines, meta.last_viewed_machine, sessionState.selected);
+        const selectedMachine = resolveDefaultMachine(
+            machines,
+            extraFieldsMap.last_viewed_machine,
+            sessionState.selected
+        );
 
-        const recentSerials = parseRecentSerials(meta.recent_machines, sessionState.recent ?? []);
+        const recentSerials = parseRecentSerials(extraFieldsMap.recent_machines, sessionState.recent ?? []);
         const recentMachines = recentSerials
             .slice(0, RECENT_MACHINES_LIMIT)
             .map(serial => machines.find(m => m.serial === serial))
@@ -545,6 +481,7 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
                       jobTitle,
                   }
                 : null,
+            dealerId,
             dealerName,
             selectedMachine,
             machines,
@@ -561,8 +498,8 @@ router.get('/customer/:customerId/header-context', async (req: Request<{ custome
  *
  * Records the customer's machine selection.
  * - Updates session (immediate)
- * - Persists last_viewed_machine to BC metafield (survives logout, sets default on next visit)
- * - Persists recent_machines to BC metafield (survives logout, drives Recent section, capped at 3)
+ * - Persists last_viewed_machine to B2B user extra field (survives logout, sets default on next visit)
+ * - Persists recent_machines to B2B user extra field (survives logout, drives Recent section, capped at 3)
  *
  * Body:     { "serial": "M5-2891-K" }
  * Response: { "selectedMachine": { model, serial, display, installDate, status } }
@@ -579,8 +516,14 @@ router.post('/customer/:customerId/machine/select', async (req: Request<{ custom
     }
 
     try {
-        const [meta, profile] = await Promise.all([fetchOkumaMetafields(customerId), fetchCustomerProfile(customerId)]);
-        const { machines } = profile?.email ? await fetchB2BMachines(profile.email) : { machines: [] as Machine[] };
+        const profile = await fetchCustomerProfile(customerId);
+        const [b2bUser, b2bMachinesResult] = await Promise.all([
+            profile?.email ? fetchB2BUserByEmail(profile.email) : Promise.resolve(null),
+            profile?.email ? fetchB2BMachines(profile.email) : Promise.resolve({ machines: [] as Machine[] }),
+        ]);
+        const { machines } = b2bMachinesResult;
+        const extraFieldsMap = buildExtraFieldsMap(b2bUser?.extraFields);
+
         const machine = machines.find(m => m.serial === serial.trim() && (model ? m.model === model.trim() : true));
 
         if (!machine) {
@@ -589,9 +532,9 @@ router.post('/customer/:customerId/machine/select', async (req: Request<{ custom
             });
         }
 
-        // Seed recent list from BC metafield so cross-session history is preserved
+        // Seed recent list from B2B extra field so cross-session history is preserved
         const sessionState = readSessionState(req, customerId);
-        const baseRecent = parseRecentSerials(meta.recent_machines, sessionState.recent ?? []);
+        const baseRecent = parseRecentSerials(extraFieldsMap.recent_machines, sessionState.recent ?? []);
 
         const updatedRecent = [machine.serial, ...baseRecent.filter(s => s !== machine.serial)].slice(
             0,
@@ -604,24 +547,17 @@ router.post('/customer/:customerId/machine/select', async (req: Request<{ custom
             .map(s => machines.find(m => m.serial === s))
             .filter((m): m is Machine => m !== undefined);
 
-        // Await both BC metafield writes so GET /header-context reads fresh data immediately after.
-        const results = await Promise.allSettled([
-            upsertOkumaMetafield(customerId, 'last_viewed_machine', machine.serial, meta._ids.last_viewed_machine),
-            upsertOkumaMetafield(
-                customerId,
-                'recent_machines',
-                JSON.stringify(updatedRecent),
-                meta._ids.recent_machines
-            ),
-        ]);
-        const keys = ['last_viewed_machine', 'recent_machines'];
-        results.forEach((r, i) => {
-            if (r.status === 'rejected') {
-                logger.error(
-                    `customer ${customerId}: metafield upsert [${keys[i]}] failed: ${(r.reason as Error).message}`
-                );
+        // Batch both extra field writes into a single B2B PUT call
+        if (b2bUser) {
+            try {
+                await upsertB2BUserExtraFields(b2bUser, {
+                    last_viewed_machine: machine.serial,
+                    recent_machines: JSON.stringify(updatedRecent),
+                });
+            } catch (err) {
+                logger.error(`customer ${customerId}: B2B extra field upsert failed: ${(err as Error).message}`);
             }
-        });
+        }
 
         return res.json({ selectedMachine: machine, recentMachines });
     } catch (err) {
@@ -633,7 +569,7 @@ router.post('/customer/:customerId/machine/select', async (req: Request<{ custom
 /**
  * GET /customer/:customerId/searches
  *
- * Returns the customer's recent searched-customer history from the BC metafield.
+ * Returns the customer's recent searched-customer history from the B2B user extra field.
  *
  * Response: { searches: CustomerSearchEntry[] }
  */
@@ -645,8 +581,10 @@ router.get('/customer/:customerId/searches', async (req: Request<{ customerId: s
     }
 
     try {
-        const meta = await fetchOkumaMetafields(customerId);
-        const searches = parseRecentSearches(meta.recent_customer_searches);
+        const profile = await fetchCustomerProfile(customerId);
+        const b2bUser = profile?.email ? await fetchB2BUserByEmail(profile.email) : null;
+        const extraFieldsMap = buildExtraFieldsMap(b2bUser?.extraFields);
+        const searches = parseRecentSearches(extraFieldsMap.recent_customer_searches);
         return res.json({ searches });
     } catch (err) {
         logger.error(`customer ${customerId}: searches fetch failed: ${(err as Error).message}`);
@@ -658,7 +596,7 @@ router.get('/customer/:customerId/searches', async (req: Request<{ customerId: s
  * POST /customer/:customerId/searches
  *
  * Prepends a searched customer entry to the dealer's recent search history and
- * persists it to the BC metafield. Deduplicates by searchedCustomerId. Capped
+ * persists it to the B2B user extra field. Deduplicates by searchedCustomerId. Capped
  * at RECENT_SEARCHES_LIMIT.
  *
  * Body:     { "customerId": 248, "customerName": "John Smith", "companyName": "Gosiger Inc." }
@@ -679,6 +617,9 @@ router.post('/customer/:customerId/searches', async (req: Request<{ customerId: 
     if (!customerId || !/^\d+$/.test(customerId)) {
         return res.status(400).json({ error: 'Invalid customerId.' });
     }
+    if (req.session.customerId !== customerId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+    }
     if (!searchedCustomerId || typeof searchedCustomerId !== 'number') {
         return res.status(400).json({ error: 'customerId (searched customer) must be a number.' });
     }
@@ -694,19 +635,24 @@ router.post('/customer/:customerId/searches', async (req: Request<{ customerId: 
     };
 
     try {
-        const meta = await fetchOkumaMetafields(customerId);
-        const current = parseRecentSearches(meta.recent_customer_searches);
+        const profile = await fetchCustomerProfile(customerId);
+        const b2bUser = profile?.email ? await fetchB2BUserByEmail(profile.email) : null;
+        const extraFieldsMap = buildExtraFieldsMap(b2bUser?.extraFields);
+        const current = parseRecentSearches(extraFieldsMap.recent_customer_searches);
         const updated = [entry, ...current.filter(s => s.customerId !== entry.customerId)].slice(
             0,
             RECENT_SEARCHES_LIMIT
         );
 
-        await upsertOkumaMetafield(
-            customerId,
-            'recent_customer_searches',
-            JSON.stringify(updated),
-            meta._ids.recent_customer_searches
-        );
+        if (b2bUser) {
+            try {
+                await upsertB2BUserExtraField(b2bUser, 'recent_customer_searches', JSON.stringify(updated));
+            } catch (err) {
+                logger.error(
+                    `customer ${customerId}: searches B2B extra field write failed: ${(err as Error).message}`
+                );
+            }
+        }
 
         return res.json({ searches: updated });
     } catch (err) {
@@ -716,48 +662,45 @@ router.post('/customer/:customerId/searches', async (req: Request<{ customerId: 
 });
 
 /**
- * GET /customer/:customerId/metafields?namespace=okuma&key=recent_customer_searches
+ * GET /customer/:customerId/metafields?key=<key>
  *
- * General-purpose BC customer metafield proxy. Returns the raw value for the
- * given namespace + key combination, proxied server-side to avoid CORS.
+ * General-purpose B2B user extra field proxy. Returns the raw value for the
+ * given key, proxied server-side to avoid CORS.
  *
  * Query params:
- *   namespace  — required, e.g. "okuma"
  *   key        — required, e.g. "recent_customer_searches"
+ *   namespace  — accepted but ignored (B2B extra fields have no namespace concept)
  *
- * Response: { customerId, namespace, key, value: string | null }
+ * Response: { customerId, key, value: string | null }
  */
 router.get('/customer/:customerId/metafields', async (req: Request<{ customerId: string }>, res: Response) => {
     const { customerId } = req.params;
-    const { namespace, key } = req.query as Record<string, string>;
+    const { key } = req.query as Record<string, string>;
 
     if (!customerId || !/^\d+$/.test(customerId)) {
         return res.status(400).json({ error: 'Invalid customerId.' });
-    }
-    if (!namespace || !namespace.trim()) {
-        return res.status(400).json({ error: 'namespace query param is required.' });
     }
     if (!key || !key.trim()) {
         return res.status(400).json({ error: 'key query param is required.' });
     }
 
     try {
-        const bcRes = await bcClient.get<{ data: BcMetafieldRecord[] }>(`/v3/customers/${customerId}/metafields`, {
-            params: { namespace: namespace.trim(), key: key.trim() },
-        });
-        const record = bcRes.data?.data?.[0] ?? null;
+        const profile = await fetchCustomerProfile(customerId);
+        const b2bUser = profile?.email ? await fetchB2BUserByEmail(profile.email) : null;
+        const extraFieldsMap = buildExtraFieldsMap(b2bUser?.extraFields);
+        const value = extraFieldsMap[key.trim()] ?? null;
 
         return res.json({
             customerId: parseInt(customerId, 10),
-            namespace: namespace.trim(),
             key: key.trim(),
-            value: record ? record.value : null,
+            value,
         });
     } catch (err) {
-        logger.error(`customer ${customerId}: metafield fetch [${namespace}/${key}] failed: ${(err as Error).message}`);
-        return res.status(500).json({ error: 'Could not load metafield.' });
+        logger.error(`customer ${customerId}: extra field fetch [${key}] failed: ${(err as Error).message}`);
+        return res.status(500).json({ error: 'Could not load extra field.' });
     }
 });
+
 /*
  * GET /customer/companyProfile?companyId={companyId}
  *

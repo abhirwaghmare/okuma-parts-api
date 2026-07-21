@@ -123,9 +123,18 @@ async function fetchAddressById(addressId: string): Promise<B2BAddress | null> {
 }
 
 async function setApprovalStatus(addressId: string, status: ApprovalStatus): Promise<boolean> {
-    const address = await fetchAddressById(addressId);
-    if (!address) return false;
+    let address: B2BAddress | null = null;
 
+    try {
+        const res = await b2bClient.get<B2BSingleAddressResponse>(`/api/v3/io/addresses/${addressId}`);
+        address = res.data?.data ?? null;
+    } catch (err) {
+        const statusCode = (err as { response?: { status?: number } }).response?.status;
+        if (statusCode === 404) return false;
+        throw err;
+    }
+
+    if (!address) return false;
     const otherFields = (address.extraFields ?? []).filter(f => f.fieldName !== APPROVAL_STATUS_FIELD);
 
     await b2bClient.put(`/api/v3/io/addresses/${addressId}`, {
@@ -159,8 +168,14 @@ router.get('/addresses', async (req: Request, res: Response) => {
         const companyIdRaw = req.query.companyId as string | undefined;
         const limitRaw = Number(req.query.limit);
         const pageRaw = Number(req.query.page);
-        const statusFilter = req.query.approvalStatus as ApprovalStatus | undefined;
 
+        let statusFilter: ApprovalStatus | undefined;
+        const statusFilterRaw = req.query.approvalStatus;
+        if (typeof statusFilterRaw === 'string') {
+            const s = statusFilterRaw.toLowerCase();
+            if (s === 'pending' || s === 'approved' || s === 'rejected') statusFilter = s;
+            else return res.status(400).json({ error: 'approvalStatus must be one of: pending, approved, rejected' });
+        }
         if (!companyIdRaw || !/^\d+$/.test(companyIdRaw)) {
             return res.status(400).json({ error: 'companyId must be a positive integer' });
         }
@@ -179,14 +194,14 @@ router.get('/addresses', async (req: Request, res: Response) => {
         const totalCount = b2bPagination?.totalCount ?? list.length;
         const totalPages = Math.ceil(totalCount / limit) || 1;
 
-        // Fetch full detail for each address to get extraFields (list endpoint omits them)
-        const detailed = await Promise.all(
-            list.map(a => fetchAddressById(String(a.addressId)).then(full => full ?? a))
-        );
-
-        let addresses = detailed.map(mapAddress);
+        let addresses = list.map(mapAddress);
         if (statusFilter) {
-            addresses = addresses.filter(a => a.approvalStatus === statusFilter);
+            // Fetch full detail for each address to get extraFields (list endpoint omits them)
+            const detailed = await Promise.all(
+                list.map(a => fetchAddressById(String(a.addressId)).then(full => full ?? a))
+            );
+
+            addresses = detailed.map(mapAddress).filter(a => a.approvalStatus === statusFilter);
         }
 
         return res.json({

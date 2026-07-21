@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import bcClient from '../services/bigcommerce';
 import b2bClient from '../services/b2b';
+import { fetchB2BUserByEmail, buildExtraFieldsMap, upsertB2BUserExtraField } from '../services/b2b-user';
 import logger from '../config/logger';
 
 const router = Router();
@@ -22,8 +23,6 @@ const STATUS_MAP: Record<number, string> = {
     14: 'Partially Refunded',
 };
 
-const METAFIELD_NAMESPACE = 'okuma';
-const METAFIELD_KEY = 'dealer_customer_ids';
 const CACHE_TTL_HOURS = 24;
 
 // Fix #4: concurrency-limited map — mirrors the batchedMap pattern in routes/dealers.ts
@@ -43,7 +42,7 @@ async function batchedMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurr
     return results;
 }
 
-interface MetafieldCache {
+interface CustomerIdCache {
     ids: number[];
     cachedAt: string;
 }
@@ -94,30 +93,30 @@ interface B2BQuote {
 }
 
 async function getDealerCustomerIds(dealerId: number): Promise<number[]> {
-    const metaRes = await bcClient.get(
-        `/v3/customers/${dealerId}/metafields?namespace=${METAFIELD_NAMESPACE}&key=${METAFIELD_KEY}`
-    );
-    const existing = metaRes.data.data?.[0];
+    // Step 1 — resolve dealer email from BC
+    const customerRes = await bcClient.get('/v3/customers', { params: { 'id:in': dealerId } });
+    const dealer = customerRes.data.data?.[0];
+    if (!dealer) throw new Error(`Dealer customer ${dealerId} not found`);
 
-    if (existing) {
-        // Fix #2: guard against malformed metafield values — treat as cache miss
+    // Step 2 — fetch B2B user to check the dealer_customer_ids extra field cache
+    const b2bUser = await fetchB2BUserByEmail(dealer.email);
+    const extraFieldsMap = buildExtraFieldsMap(b2bUser?.extraFields);
+
+    if (extraFieldsMap.dealer_customer_ids) {
+        // Fix #2: guard against malformed extra field values — treat as cache miss
         try {
-            const parsed: MetafieldCache = JSON.parse(existing.value);
+            const parsed: CustomerIdCache = JSON.parse(extraFieldsMap.dealer_customer_ids);
             const ageHours = (Date.now() - new Date(parsed.cachedAt).getTime()) / (1000 * 60 * 60);
             if (ageHours < CACHE_TTL_HOURS) {
                 logger.info(`Dashboard: using cached customer IDs for dealer ${dealerId}`);
                 return parsed.ids;
             }
         } catch {
-            logger.warn(`Dashboard: malformed metafield cache for dealer ${dealerId}, re-resolving`);
+            logger.warn(`Dashboard: malformed extra field cache for dealer ${dealerId}, re-resolving`);
         }
     }
 
     logger.info(`Dashboard: resolving customer IDs for dealer ${dealerId}`);
-
-    const customerRes = await bcClient.get(`/v3/customers?id:in=${dealerId}`);
-    const dealer = customerRes.data.data?.[0];
-    if (!dealer) throw new Error(`Dealer customer ${dealerId} not found`);
 
     const companyName: string = dealer.company;
     let customerIds: number[] = [dealerId];
@@ -133,18 +132,10 @@ async function getDealerCustomerIds(dealerId: number): Promise<number[]> {
         }
     }
 
-    // Fix #3: use read_and_sf_access to match permission_set convention in this codebase
-    const metafieldPayload = {
-        namespace: METAFIELD_NAMESPACE,
-        key: METAFIELD_KEY,
-        value: JSON.stringify({ ids: customerIds, cachedAt: new Date().toISOString() } as MetafieldCache),
-        permission_set: 'read_and_sf_access',
-    };
-
-    if (existing) {
-        await bcClient.put(`/v3/customers/${dealerId}/metafields/${existing.id}`, metafieldPayload);
-    } else {
-        await bcClient.post(`/v3/customers/${dealerId}/metafields`, metafieldPayload);
+    // Persist the resolved IDs as a B2B user extra field for caching
+    if (b2bUser) {
+        const cacheValue = JSON.stringify({ ids: customerIds, cachedAt: new Date().toISOString() } as CustomerIdCache);
+        await upsertB2BUserExtraField(b2bUser, 'dealer_customer_ids', cacheValue);
     }
 
     return customerIds;
