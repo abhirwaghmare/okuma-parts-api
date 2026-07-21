@@ -45,6 +45,7 @@ interface AddItemBody {
     productId?: unknown;
     quantity?: unknown;
     variantId?: unknown;
+    customerId?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,14 +79,24 @@ async function fetchRedirectUrls(cartId: string): Promise<BcRedirectUrls> {
 /**
  * Create a new BC cart with one line item.
  * BC OOTB: POST /v3/carts
+ * customer_id is set at creation only — BC resolves that customer's price-list
+ * pricing (e.g. dealer/Distributor group) for every line item in the cart.
+ * Appending items to an already-created cart does not need it again, since
+ * the cart's customer binding was already set here.
  */
-async function createCart(productId: number, quantity: number, variantId?: number): Promise<BcCart> {
+async function createCart(
+    productId: number,
+    quantity: number,
+    variantId?: number,
+    customerId?: number
+): Promise<BcCart> {
     const lineItem: Record<string, unknown> = { product_id: productId, quantity };
     if (variantId) lineItem.variant_id = variantId;
 
-    const res = await bcClient.post<{ data: BcCart }>('/v3/carts', {
-        line_items: [lineItem],
-    });
+    const payload: Record<string, unknown> = { line_items: [lineItem] };
+    if (customerId) payload.customer_id = customerId;
+
+    const res = await bcClient.post<{ data: BcCart }>('/v3/carts', payload);
     return res.data.data;
 }
 
@@ -119,7 +130,11 @@ async function appendCartItem(
  * subsequent calls using the cartId stored in the session. If the stored cart
  * has expired on BC (404), a new one is created transparently.
  *
- * Body: { productId: number, quantity?: number, variantId?: number }
+ * Body: { productId: number, quantity?: number, variantId?: number, customerId?: number }
+ *
+ * customerId identifies the logged-in dealer so BC applies their group-specific
+ * (e.g. Distributor) pricing to the cart — only used when the cart is first
+ * created; an already-created cart keeps its original customer binding.
  *
  * Response:
  * {
@@ -129,7 +144,7 @@ async function appendCartItem(
  * }
  */
 router.post('/cart/items', async (req: Request, res: Response) => {
-    const { productId, quantity = 1, variantId } = req.body as AddItemBody;
+    const { productId, quantity = 1, variantId, customerId } = req.body as AddItemBody;
 
     if (!productId || typeof productId !== 'number' || !Number.isInteger(productId) || productId <= 0) {
         return res.status(400).json({ error: 'productId must be a positive integer.' });
@@ -139,6 +154,17 @@ router.post('/cart/items', async (req: Request, res: Response) => {
     }
     if (variantId !== undefined && (typeof variantId !== 'number' || !Number.isInteger(variantId) || variantId <= 0)) {
         return res.status(400).json({ error: 'variantId must be a positive integer.' });
+    }
+    if (
+        customerId !== undefined &&
+        (typeof customerId !== 'number' || !Number.isInteger(customerId) || customerId <= 0)
+    ) {
+        return res.status(400).json({ error: 'customerId must be a positive integer.' });
+    }
+
+    const session = req.session as unknown as { customerId?: string };
+    if (customerId !== undefined && session.customerId && session.customerId !== String(customerId)) {
+        return res.status(403).json({ error: 'Forbidden.' });
     }
 
     try {
@@ -153,13 +179,23 @@ router.post('/cart/items', async (req: Request, res: Response) => {
                 if ((err as AxiosError).response?.status === 404) {
                     logger.warn(`cart ${existingCartId}: not found on BC, creating new cart`);
                     clearCartId(req);
-                    cart = await createCart(productId, quantity, variantId as number | undefined);
+                    cart = await createCart(
+                        productId,
+                        quantity,
+                        variantId as number | undefined,
+                        customerId as number | undefined
+                    );
                 } else {
                     throw err;
                 }
             }
         } else {
-            cart = await createCart(productId, quantity, variantId as number | undefined);
+            cart = await createCart(
+                productId,
+                quantity,
+                variantId as number | undefined,
+                customerId as number | undefined
+            );
         }
 
         setCartId(req, cart.id);

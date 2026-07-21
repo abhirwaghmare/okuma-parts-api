@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Router, Request, Response } from 'express';
 import bcClient from '../services/bigcommerce';
 import b2bClient from '../services/b2b';
+import fetchCustomerProfile, { BcCustomer } from '../services/customerProfile';
 import logger from '../config/logger';
 import authenticateBCToken from '../middleware/auth';
 import config from '../config';
@@ -72,16 +73,6 @@ interface OkumaMetafields {
     recent_machines?: string; // JSON array of serials, most-recent first (capped at 3)
     recent_customer_searches?: string; // JSON array of search strings, most-recent first (capped at 10)
     _ids: Record<string, number>; // key → BC metafield record ID (not serialised to callers)
-}
-
-interface BcCustomer {
-    id: number;
-    email: string;
-    first_name: string;
-    last_name: string;
-    company: string;
-    phone: string;
-    customer_group_id: number | null;
 }
 
 interface BcMetafieldRecord {
@@ -158,22 +149,6 @@ async function upsertOkumaMetafield(
         await bcClient.put(`/v3/customers/${customerId}/metafields/${existing.id}`, payload);
     } else {
         await bcClient.post(`/v3/customers/${customerId}/metafields`, payload);
-    }
-}
-
-/**
- * Fetch customer profile (company, phone, email) from BC.
- * BC OOTB: GET /v3/customers?id:in=:customerId
- */
-async function fetchCustomerProfile(customerId: string): Promise<BcCustomer | null> {
-    try {
-        const res = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
-            params: { 'id:in': customerId },
-        });
-        return res.data?.data?.[0] ?? null;
-    } catch (err) {
-        logger.warn(`fetchCustomerProfile ${customerId}: ${(err as Error).message}`);
-        return null;
     }
 }
 

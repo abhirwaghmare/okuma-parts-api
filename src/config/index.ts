@@ -14,6 +14,7 @@ interface BcConfig {
     appCallbackUrl: string | undefined;
     apiBaseUrl: string;
     b2bApiBaseUrl: string;
+    channelId: number;
 }
 
 interface AppConfig {
@@ -43,6 +44,11 @@ const config: AppConfig = {
         appCallbackUrl: process.env.BC_APP_CALLBACK_URL,
         apiBaseUrl: `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}`,
         b2bApiBaseUrl: 'https://api-b2b.bigcommerce.com',
+        // TODO: confirm the real channel ID per environment via GET /v3/channels — defaults to 1 (BC's default channel)
+        channelId: (() => {
+            const parsed = parseInt(process.env.BC_CHANNEL_ID || '1', 10);
+            return Number.isFinite(parsed) ? parsed : 1;
+        })(),
     },
     partsBook: {
         cdnBaseUrl: process.env.PARTS_BOOK_CDN_BASE_URL,

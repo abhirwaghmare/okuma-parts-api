@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import bcClient from '../services/bigcommerce';
+import fetchCustomerProfile from '../services/customerProfile';
 import logger from '../config/logger';
 
 const router = Router();
@@ -8,14 +9,6 @@ interface BcMetafield {
     key: string;
     namespace: string;
     value: string;
-}
-
-interface BcCustomer {
-    first_name: string;
-    last_name: string;
-    email: string;
-    phone: string;
-    company: string;
 }
 
 router.get('/api/customer/:customerId/profile', async (req, res) => {
@@ -28,12 +21,11 @@ router.get('/api/customer/:customerId/profile', async (req, res) => {
     // TODO: add auth guard once session population is confirmed (req.session.customerId === customerId)
 
     try {
-        const [customerRes, metaRes] = await Promise.all([
-            bcClient.get<{ data: BcCustomer[] }>(`/v3/customers?id:in=${customerId}`),
+        const [customer, metaRes] = await Promise.all([
+            fetchCustomerProfile(customerId),
             bcClient.get<{ data: BcMetafield[] }>(`/v3/customers/${customerId}/metafields`),
         ]);
 
-        const customer = customerRes.data?.data?.[0];
         if (!customer) {
             return res.status(404).json({ error: 'Customer not found.' });
         }

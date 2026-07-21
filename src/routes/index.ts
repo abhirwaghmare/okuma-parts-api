@@ -10,6 +10,7 @@ import customer from './customer';
 import customers from './customers';
 import cart from './cart';
 import dashboard from './dashboard';
+import partsSearch from './parts-search';
 
 const router = Router();
 // Rate limiter
@@ -34,6 +35,7 @@ router.use('/v1/api', apiLimiter, authenticateBCToken, v1Router);
 router.use('/v1', customer);
 router.use('/v1', customers);
 router.use('/v1', apiLimiter, cart);
+router.use('/v1', apiLimiter, partsSearch);
 router.use('/v1/dashboard', apiLimiter, authenticateBCToken, dashboard);
 
 export default router;
