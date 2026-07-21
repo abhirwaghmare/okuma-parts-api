@@ -4,7 +4,7 @@ import logger from '../../config/logger';
 
 const router = Router();
 
-// The pre-configured B2B address extra field name for approval workflow
+// Pre-configured B2B address extra field name for the approval workflow
 const APPROVAL_STATUS_FIELD = 'Approval Status';
 type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
@@ -69,10 +69,10 @@ interface CreateAddressBody {
     zipCode?: string;
     phoneNumber?: string;
     label?: string;
-    isBilling?: number;
-    isShipping?: number;
-    isDefaultBilling?: number;
-    isDefaultShipping?: number;
+    isBilling?: number | boolean;
+    isShipping?: number | boolean;
+    isDefaultBilling?: number | boolean;
+    isDefaultShipping?: number | boolean;
     extraFields?: B2BAddressExtraField[];
 }
 
@@ -135,7 +135,12 @@ async function setApprovalStatus(addressId: string, status: ApprovalStatus): Pro
     }
 
     if (!address) return false;
+
     const otherFields = (address.extraFields ?? []).filter(f => f.fieldName !== APPROVAL_STATUS_FIELD);
+
+    // Approved → enable for both shipping and billing.
+    // Pending / rejected → locked (false) so the address cannot be selected at checkout.
+    const usable = status === 'approved';
 
     await b2bClient.put(`/api/v3/io/addresses/${addressId}`, {
         firstName: address.firstName,
@@ -148,10 +153,10 @@ async function setApprovalStatus(addressId: string, status: ApprovalStatus): Pro
         zipCode: address.zipCode,
         phoneNumber: address.phoneNumber,
         label: address.label,
-        isBilling: address.isBilling ? 1 : 0,
-        isShipping: address.isShipping ? 1 : 0,
-        isDefaultBilling: address.isDefaultBilling ? 1 : 0,
-        isDefaultShipping: address.isDefaultShipping ? 1 : 0,
+        isBilling: usable,
+        isShipping: usable,
+        isDefaultBilling: false,
+        isDefaultShipping: false,
         companyId: Number(address.companyId),
         extraFields: [...otherFields, { fieldName: APPROVAL_STATUS_FIELD, fieldValue: status }],
     });
@@ -194,14 +199,15 @@ router.get('/addresses', async (req: Request, res: Response) => {
         const totalCount = b2bPagination?.totalCount ?? list.length;
         const totalPages = Math.ceil(totalCount / limit) || 1;
 
-        let addresses = list.map(mapAddress);
-        if (statusFilter) {
-            // Fetch full detail for each address to get extraFields (list endpoint omits them)
-            const detailed = await Promise.all(
-                list.map(a => fetchAddressById(String(a.addressId)).then(full => full ?? a))
-            );
+        // List endpoint omits extraFields — fetch full detail for every address
+        // so approvalStatus is always populated and filtering is always accurate.
+        const detailed = await Promise.all(
+            list.map(a => fetchAddressById(String(a.addressId)).then(full => full ?? a))
+        );
 
-            addresses = detailed.map(mapAddress).filter(a => a.approvalStatus === statusFilter);
+        let addresses = detailed.map(mapAddress);
+        if (statusFilter) {
+            addresses = addresses.filter(a => a.approvalStatus === statusFilter);
         }
 
         return res.json({
@@ -243,10 +249,6 @@ router.post('/addresses', async (req: Request, res: Response) => {
             zipCode: body.zipCode,
             phoneNumber: body.phoneNumber,
             label: body.label,
-            isBilling: body.isBilling ?? 0,
-            isShipping: body.isShipping ?? 0,
-            isDefaultBilling: body.isDefaultBilling ?? 0,
-            isDefaultShipping: body.isDefaultShipping ?? 0,
             extraFields: [{ fieldName: APPROVAL_STATUS_FIELD, fieldValue: 'pending' }],
         };
 
@@ -257,6 +259,28 @@ router.post('/addresses', async (req: Request, res: Response) => {
             logger.error(`Addresses create: unexpected B2B response for companyId ${payload.companyId}`);
             return res.status(502).json({ error: 'Unexpected response from B2B API' });
         }
+
+        // B2B always defaults isShipping/isBilling to true on creation — lock them
+        // to false with an immediate PUT so the address cannot be used at checkout
+        // until a distributor approves it.
+        await b2bClient.put(`/api/v3/io/addresses/${created.addressId}`, {
+            firstName: created.firstName,
+            lastName: created.lastName,
+            addressLine1: created.addressLine1,
+            addressLine2: created.addressLine2,
+            city: created.city,
+            stateName: created.stateName,
+            countryName: created.countryName,
+            zipCode: created.zipCode,
+            phoneNumber: created.phoneNumber,
+            label: created.label,
+            isBilling: false,
+            isShipping: false,
+            isDefaultBilling: false,
+            isDefaultShipping: false,
+            companyId: Number(created.companyId),
+            extraFields: [{ fieldName: APPROVAL_STATUS_FIELD, fieldValue: 'pending' }],
+        });
 
         // Fetch full record so extraFields are populated in the response
         const full = await fetchAddressById(String(created.addressId));
