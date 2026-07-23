@@ -107,6 +107,50 @@ interface DealerCustomerResult {
 let groupCache: Record<number, string> | null = null;
 let groupCacheAt = 0;
 
+// ---------------------------------------------------------------------------
+// Types — Dealer Address Review
+// ---------------------------------------------------------------------------
+
+interface B2BAddressExtraFieldEntry {
+    fieldName: string;
+    fieldValue: string;
+}
+
+interface B2BAddressItem {
+    addressId: number;
+    firstName: string;
+    lastName: string;
+    phoneNumber: string;
+    zipCode: string;
+    addressLine1: string;
+    addressLine2: string;
+    city: string;
+    stateName: string;
+    countryName: string;
+    stateCode: string;
+    countryCode: string;
+    companyId: string;
+    isBilling: boolean;
+    isShipping: boolean;
+    isDefaultBilling: boolean;
+    isDefaultShipping: boolean;
+    label: string;
+    createdAt: number;
+    updatedAt: number;
+    extraFields?: B2BAddressExtraFieldEntry[];
+}
+
+interface B2BAddressListResponse {
+    data: B2BAddressItem[];
+}
+
+interface B2BAddressDetailResponse {
+    data: B2BAddressItem;
+}
+
+type DealerAddressApprovalStatus = 'pending' | 'approved' | 'rejected';
+const DEALER_APPROVAL_FIELD = 'Approval Status';
+
 /**
  * Fetch all BC customer groups and return a map of id → name.
  * Cached for 5 minutes.
@@ -711,6 +755,173 @@ router.post('/dealers/:dealerId/recent-customer-search', async (req, res) => {
     } catch (err) {
         logger.error(`dealer ${dealerId}: recent-customer-search POST failed: ${(err as Error).message}`);
         return res.status(500).json({ error: 'Could not save recent customer search.' });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Address Helpers — Dealer Address Review
+// ---------------------------------------------------------------------------
+
+function getDealerAddressApprovalStatus(extraFields?: B2BAddressExtraFieldEntry[]): DealerAddressApprovalStatus | null {
+    const field = (extraFields ?? []).find(f => f.fieldName.trim().toLowerCase() === DEALER_APPROVAL_FIELD.toLowerCase());
+    const raw = field?.fieldValue;
+    if (typeof raw !== 'string') return null;
+    const v = raw.trim().toLowerCase();
+    if (v === 'pending' || v === 'approved' || v === 'rejected') return v as DealerAddressApprovalStatus;
+    return null;
+}
+
+// List endpoint omits extraFields — a detail call per address is required to read Approval Status.
+async function fetchB2BAddressDetail(addressId: number): Promise<B2BAddressItem | null> {
+    try {
+        const res = await b2bClient.get<B2BAddressDetailResponse>(`/api/v3/io/addresses/${addressId}`);
+        return res.data?.data ?? null;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchAllCompanyAddressesWithDetail(companyId: number): Promise<B2BAddressItem[]> {
+    const list = await collectPages(async off => {
+        try {
+            const res = await b2bClient.get<B2BAddressListResponse>('/api/v3/io/addresses', {
+                params: { companyId, limit: B2B_PAGE_LIMIT, offset: off },
+            });
+            return res.data?.data ?? [];
+        } catch (err) {
+            logger.error(
+                `dealer-addresses: company ${companyId} offset=${off} fetch failed: ${(err as Error).message}`
+            );
+            return [];
+        }
+    });
+    return batchedMap(list, a => fetchB2BAddressDetail(a.addressId).then(full => full ?? a), 10);
+}
+
+function mapDealerAddress(a: B2BAddressItem, companyName: string) {
+    return {
+        addressId: a.addressId,
+        companyId: /^\d+$/.test(a.companyId) ? Number(a.companyId) : null,
+        companyName,
+        label: a.label || null,
+        firstName: a.firstName,
+        lastName: a.lastName,
+        phoneNumber: a.phoneNumber || null,
+        addressLine1: a.addressLine1,
+        addressLine2: a.addressLine2 || null,
+        city: a.city,
+        state: a.stateName,
+        stateCode: a.stateCode || null,
+        zip: a.zipCode || null,
+        country: a.countryName,
+        countryCode: a.countryCode || null,
+        isBilling: a.isBilling,
+        isShipping: a.isShipping,
+        isDefaultBilling: a.isDefaultBilling,
+        isDefaultShipping: a.isDefaultShipping,
+        approvalStatus: getDealerAddressApprovalStatus(a.extraFields),
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+    };
+}
+
+router.get('/dealers/:dealerId/addresses', async (req, res) => {
+    const { dealerId } = req.params;
+
+    if (!dealerId || !/^\d+$/.test(dealerId)) {
+        return res.status(400).json({ error: 'Invalid dealerId — must be a numeric BC customer ID.' });
+    }
+
+    const dealerIdNum = Number(dealerId);
+
+    const limitRaw = Number(req.query.limit);
+    const pageRaw = Number(req.query.page);
+    const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 20;
+    const page = Number.isInteger(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+
+    let statusFilter: DealerAddressApprovalStatus | undefined;
+    const statusRaw = req.query.approvalStatus;
+    if (typeof statusRaw === 'string') {
+        const s = statusRaw.toLowerCase();
+        if (s === 'pending' || s === 'approved' || s === 'rejected') {
+            statusFilter = s as DealerAddressApprovalStatus;
+        } else {
+            return res.status(400).json({ error: 'approvalStatus must be one of: pending, approved, rejected' });
+        }
+    }
+
+    const emptyPage = () =>
+        res.json({
+            dealerId: dealerIdNum,
+            pagination: { total: 0, perPage: limit, currentPage: page, totalPages: 0, offset: 0 },
+            data: [],
+        });
+
+    try {
+        const dealerRes = await bcClient.get<{ data: BcCustomer[] }>('/v3/customers', {
+            params: { 'id:in': dealerId },
+        });
+        const dealerRecord = dealerRes.data?.data?.[0] ?? null;
+
+        if (!dealerRecord) {
+            return res.status(404).json({ error: 'Dealer not found.' });
+        }
+
+        const companyName = dealerRecord.company?.trim();
+
+        if (!companyName) {
+            logger.warn(`dealer-addresses: dealer ${dealerIdNum} has no company name on their BC record`);
+            return emptyPage();
+        }
+
+        const groupMap = await fetchCustomerGroupMap();
+        const groupExists = Object.values(groupMap).some(name => name === companyName);
+
+        if (!groupExists) {
+            logger.warn(`dealer-addresses: no BC customer group matching "${companyName}"`);
+            return emptyPage();
+        }
+
+        // bcGroupName match mirrors dealers/context — companies tagged with the dealer's group name are their customers.
+        const customerCompanies = await fetchB2BCompaniesByGroupName(companyName);
+
+        if (customerCompanies.length === 0) {
+            logger.info(`dealer-addresses: no B2B companies with bcGroupName "${companyName}"`);
+            return emptyPage();
+        }
+
+        logger.info(`dealer-addresses: dealer ${dealerIdNum} (${companyName}) — ${customerCompanies.length} companies`);
+
+        const addressesByCompany = await batchedMap(
+            customerCompanies,
+            sub =>
+                fetchAllCompanyAddressesWithDetail(sub.companyId).then(addrs =>
+                    addrs.map(a => mapDealerAddress(a, sub.companyName))
+                ),
+            5
+        );
+
+        let allAddresses = addressesByCompany.flat();
+
+        if (statusFilter) {
+            allAddresses = allAddresses.filter(a => a.approvalStatus === statusFilter);
+        }
+
+        const total = allAddresses.length;
+        const offset = (page - 1) * limit;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+        const pageData = allAddresses.slice(offset, offset + limit);
+
+        logger.info(`dealer-addresses: dealer ${dealerIdNum} — returning ${pageData.length}/${total} addresses`);
+
+        return res.json({
+            dealerId: dealerIdNum,
+            pagination: { total, perPage: limit, currentPage: page, totalPages, offset },
+            data: pageData,
+        });
+    } catch (err) {
+        logger.error(`dealer ${dealerId}: addresses fetch failed: ${(err as Error).message}`);
+        return res.status(500).json({ error: 'Could not load dealer addresses.' });
     }
 });
 
