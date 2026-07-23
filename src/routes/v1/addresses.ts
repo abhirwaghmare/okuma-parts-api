@@ -1,5 +1,8 @@
 import { Router, Request, Response } from 'express';
 import b2bClient from '../../services/b2b';
+import { fetchB2BCompanyById, fetchB2BCompanyByUserEmail } from '../../services/b2b-company';
+import { buildExtraFieldsMap } from '../../services/b2b-user';
+import fetchCustomerProfile from '../../services/customerProfile';
 import logger from '../../config/logger';
 
 const router = Router();
@@ -76,6 +79,8 @@ interface CreateAddressBody {
     extraFields?: B2BAddressExtraField[];
 }
 
+const BATCH_CONCURRENCY = 10;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -109,8 +114,23 @@ function mapAddress(a: B2BAddress) {
         isDefaultShipping: a.isDefaultShipping,
         externalId: a.externalId || null,
         companyId: a.companyId,
+        createdAt: a.createdAt ?? null,
+        updatedAt: a.updatedAt ?? null,
         approvalStatus: getApprovalStatus(a.extraFields),
     };
+}
+
+async function mapInBatches<T, U>(
+    items: T[],
+    mapper: (item: T) => Promise<U>,
+    index = 0,
+    accumulated: U[] = []
+): Promise<U[]> {
+    if (index >= items.length) return accumulated;
+
+    const batch = items.slice(index, index + BATCH_CONCURRENCY);
+    const mapped = await Promise.all(batch.map(mapper));
+    return mapInBatches(items, mapper, index + BATCH_CONCURRENCY, [...accumulated, ...mapped]);
 }
 
 async function fetchAddressById(addressId: string): Promise<B2BAddress | null> {
@@ -122,27 +142,14 @@ async function fetchAddressById(addressId: string): Promise<B2BAddress | null> {
     }
 }
 
-async function setApprovalStatus(addressId: string, status: ApprovalStatus): Promise<boolean> {
-    let address: B2BAddress | null = null;
-
-    try {
-        const res = await b2bClient.get<B2BSingleAddressResponse>(`/api/v3/io/addresses/${addressId}`);
-        address = res.data?.data ?? null;
-    } catch (err) {
-        const statusCode = (err as { response?: { status?: number } }).response?.status;
-        if (statusCode === 404) return false;
-        throw err;
-    }
-
-    if (!address) return false;
-
+async function applyApprovalStatus(address: B2BAddress, status: ApprovalStatus): Promise<void> {
     const otherFields = (address.extraFields ?? []).filter(f => f.fieldName !== APPROVAL_STATUS_FIELD);
 
     // Approved → enable for both shipping and billing.
     // Pending / rejected → locked (false) so the address cannot be selected at checkout.
     const usable = status === 'approved';
 
-    await b2bClient.put(`/api/v3/io/addresses/${addressId}`, {
+    await b2bClient.put(`/api/v3/io/addresses/${address.addressId}`, {
         firstName: address.firstName,
         lastName: address.lastName,
         addressLine1: address.addressLine1,
@@ -160,19 +167,88 @@ async function setApprovalStatus(addressId: string, status: ApprovalStatus): Pro
         companyId: Number(address.companyId),
         extraFields: [...otherFields, { fieldName: APPROVAL_STATUS_FIELD, fieldValue: status }],
     });
-    return true;
+}
+
+/**
+ * Returns the distributor's account_number if the BC customer has relationship_type = distributor,
+ * or null if the customer is not a distributor or cannot be resolved.
+ */
+async function resolveDistributorAccountNumber(distributorId: string): Promise<string | null> {
+    const profile = await fetchCustomerProfile(distributorId);
+    if (!profile?.email) return null;
+    const company = await fetchB2BCompanyByUserEmail(profile.email);
+    if (!company) return null;
+    const fields = buildExtraFieldsMap(company.extraFields);
+    if (fields.relationship_type?.toLowerCase() !== 'distributor') return null;
+    return fields.account_number ?? null;
 }
 
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
-// GET /v1/api/addresses?companyId=13675067&limit=10&page=1
+/**
+ * Fetch all B2B customer company IDs whose distributor_id matches the given account number.
+ * The company list endpoint omits extraFields, so each company is fetched individually for its detail.
+ */
+async function fetchCompanyStubs(
+    offset: number,
+    accumulated: Array<{ companyId: number }>
+): Promise<Array<{ companyId: number }>> {
+    const PAGE = 250;
+    const res = await b2bClient.get<{ data: Array<{ companyId: number }> }>('/api/v3/io/companies', {
+        params: { limit: PAGE, offset },
+    });
+    const page = res.data?.data ?? [];
+    const all = [...accumulated, ...page];
+    return page.length < PAGE ? all : fetchCompanyStubs(offset + PAGE, all);
+}
+
+async function fetchDistributorCustomerCompanyIds(accountNumber: string): Promise<number[]> {
+    const stubs = await fetchCompanyStubs(0, []);
+    const details = await mapInBatches(stubs, stub => fetchB2BCompanyById(stub.companyId));
+    return details
+        .filter((c): c is NonNullable<typeof c> => {
+            if (!c) return false;
+            const fields = buildExtraFieldsMap(c.extraFields);
+            return fields.distributor_id === accountNumber;
+        })
+        .map(c => c.companyId);
+}
+
+/**
+ * Fetch all addresses for a single company, enriched with extraFields.
+ */
+async function fetchAddressPage(companyId: number, offset: number, accumulated: B2BAddress[]): Promise<B2BAddress[]> {
+    const PAGE = 250;
+    const res = await b2bClient.get<B2BAddressesResponse>('/api/v3/io/addresses', {
+        params: { companyId, limit: PAGE, offset },
+    });
+    const page = res.data?.data ?? [];
+    const all = [...accumulated, ...page];
+    return page.length < PAGE ? all : fetchAddressPage(companyId, offset + PAGE, all);
+}
+
+async function fetchAllAddressesForCompany(companyId: number): Promise<B2BAddress[]> {
+    const all = await fetchAddressPage(companyId, 0, []);
+    return mapInBatches(all, address => fetchAddressById(String(address.addressId)).then(full => full ?? address));
+}
+
+// GET /v1/api/addresses?distributorId=326&companyId=13802422&approvalStatus=pending&limit=20&page=1
+// distributorId is required. companyId is optional — omit to get addresses across all associated customers.
 router.get('/addresses', async (req: Request, res: Response) => {
     try {
+        const distributorIdRaw = req.query.distributorId as string | undefined;
         const companyIdRaw = req.query.companyId as string | undefined;
         const limitRaw = Number(req.query.limit);
         const pageRaw = Number(req.query.page);
+
+        if (!distributorIdRaw || !/^\d+$/.test(distributorIdRaw)) {
+            return res.status(400).json({ error: 'distributorId is required and must be a positive integer' });
+        }
+        if (companyIdRaw !== undefined && !/^\d+$/.test(companyIdRaw)) {
+            return res.status(400).json({ error: 'companyId must be a positive integer' });
+        }
 
         let statusFilter: ApprovalStatus | undefined;
         const statusFilterRaw = req.query.approvalStatus;
@@ -181,38 +257,58 @@ router.get('/addresses', async (req: Request, res: Response) => {
             if (s === 'pending' || s === 'approved' || s === 'rejected') statusFilter = s;
             else return res.status(400).json({ error: 'approvalStatus must be one of: pending, approved, rejected' });
         }
-        if (!companyIdRaw || !/^\d+$/.test(companyIdRaw)) {
-            return res.status(400).json({ error: 'companyId must be a positive integer' });
-        }
 
-        const companyId = Number(companyIdRaw);
         const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 250) : 50;
         const page = Number.isInteger(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-        const offset = (page - 1) * limit;
 
-        const b2bRes = await b2bClient.get<B2BAddressesResponse>('/api/v3/io/addresses', {
-            params: { companyId, limit, offset },
-        });
+        // Resolve distributor
+        const accountNumber = await resolveDistributorAccountNumber(distributorIdRaw);
+        if (!accountNumber) {
+            return res.status(403).json({ error: 'Forbidden: only distributors may view address requests' });
+        }
 
-        const list: B2BAddress[] = b2bRes.data?.data ?? [];
-        const b2bPagination = b2bRes.data?.meta?.pagination;
-        const totalCount = b2bPagination?.totalCount ?? list.length;
-        const totalPages = Math.ceil(totalCount / limit) || 1;
+        let companyIds: number[];
+        if (companyIdRaw) {
+            // Validate the requested company belongs to this distributor
+            const company = await fetchB2BCompanyById(Number(companyIdRaw));
+            if (!company) {
+                return res.status(502).json({ error: 'Unable to resolve requested company from B2B API' });
+            }
+            const companyFields = buildExtraFieldsMap(company.extraFields);
+            if (companyFields.distributor_id !== accountNumber) {
+                return res.status(403).json({ error: 'Forbidden: this company does not belong to your customers' });
+            }
+            companyIds = [Number(companyIdRaw)];
+        } else {
+            companyIds = await fetchDistributorCustomerCompanyIds(accountNumber);
+        }
 
-        // List endpoint omits extraFields — fetch full detail for every address
-        // so approvalStatus is always populated and filtering is always accurate.
-        const detailed = await Promise.all(
-            list.map(a => fetchAddressById(String(a.addressId)).then(full => full ?? a))
-        );
+        if (companyIds.length === 0) {
+            return res.json({
+                pagination: { total: 0, perPage: limit, currentPage: page, totalPages: 0, offset: 0 },
+                data: [],
+            });
+        }
 
-        let addresses = detailed.map(mapAddress);
+        // Fetch and enrich addresses for all companies with bounded concurrency
+        const nested = await mapInBatches(companyIds, fetchAllAddressesForCompany);
+        let addresses = nested.flat().map(mapAddress);
+
         if (statusFilter) {
             addresses = addresses.filter(a => a.approvalStatus === statusFilter);
         }
 
+        // Sort by creation date descending (newest first)
+        addresses.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+        const total = addresses.length;
+        const totalPages = Math.ceil(total / limit) || 1;
+        const offset = (page - 1) * limit;
+        const paginated = addresses.slice(offset, offset + limit);
+
         return res.json({
-            pagination: { total: totalCount, perPage: limit, currentPage: page, totalPages, offset },
-            data: addresses,
+            pagination: { total, perPage: limit, currentPage: page, totalPages, offset },
+            data: paginated,
         });
     } catch (err) {
         logger.error(`Addresses GET error: ${(err as Error).message}`);
@@ -221,10 +317,11 @@ router.get('/addresses', async (req: Request, res: Response) => {
 });
 
 // POST /v1/api/addresses
-// Creates address under Pending Approval status (customer-initiated request)
+// Creates an address. If distributorId is provided and the caller is a distributor,
+// the address is immediately approved. Otherwise it is created as pending.
 router.post('/addresses', async (req: Request, res: Response) => {
     try {
-        const body = req.body as Partial<CreateAddressBody>;
+        const body = req.body as Partial<CreateAddressBody> & { distributorId?: unknown };
 
         const missing = (
             ['firstName', 'lastName', 'companyId', 'addressLine1', 'city', 'stateName', 'countryName'] as const
@@ -236,6 +333,25 @@ router.post('/addresses', async (req: Request, res: Response) => {
         if (!Number.isInteger(Number(body.companyId)) || Number(body.companyId) <= 0) {
             return res.status(400).json({ error: 'companyId must be a positive integer' });
         }
+
+        // If the caller is a distributor, auto-approve only for companies associated to that distributor.
+        let initialStatus: ApprovalStatus = 'pending';
+        if (body.distributorId && /^[1-9]\d*$/.test(String(body.distributorId))) {
+            const accountNumber = await resolveDistributorAccountNumber(String(body.distributorId));
+            if (accountNumber) {
+                const company = await fetchB2BCompanyById(Number(body.companyId));
+                if (!company) {
+                    return res.status(502).json({ error: 'Unable to resolve company for distributor approval' });
+                }
+                const fields = buildExtraFieldsMap(company.extraFields);
+                if (fields.distributor_id !== accountNumber) {
+                    return res.status(403).json({ error: 'Forbidden: distributorId is not associated with this company' });
+                }
+                initialStatus = 'approved';
+            }
+        }
+
+        const usable = initialStatus === 'approved';
 
         const payload: CreateAddressBody = {
             firstName: body.firstName as string,
@@ -249,7 +365,7 @@ router.post('/addresses', async (req: Request, res: Response) => {
             zipCode: body.zipCode,
             phoneNumber: body.phoneNumber,
             label: body.label,
-            extraFields: [{ fieldName: APPROVAL_STATUS_FIELD, fieldValue: 'pending' }],
+            extraFields: [{ fieldName: APPROVAL_STATUS_FIELD, fieldValue: initialStatus }],
         };
 
         const b2bRes = await b2bClient.post<B2BSingleAddressResponse>('/api/v3/io/addresses', payload);
@@ -260,9 +376,8 @@ router.post('/addresses', async (req: Request, res: Response) => {
             return res.status(502).json({ error: 'Unexpected response from B2B API' });
         }
 
-        // B2B always defaults isShipping/isBilling to true on creation — lock them
-        // to false with an immediate PUT so the address cannot be used at checkout
-        // until a distributor approves it.
+        // B2B always defaults isShipping/isBilling to true on creation — set them
+        // based on whether the address is immediately approved or pending.
         await b2bClient.put(`/api/v3/io/addresses/${created.addressId}`, {
             firstName: created.firstName,
             lastName: created.lastName,
@@ -274,12 +389,12 @@ router.post('/addresses', async (req: Request, res: Response) => {
             zipCode: created.zipCode,
             phoneNumber: created.phoneNumber,
             label: created.label,
-            isBilling: false,
-            isShipping: false,
+            isBilling: usable,
+            isShipping: usable,
             isDefaultBilling: false,
             isDefaultShipping: false,
             companyId: Number(created.companyId),
-            extraFields: [{ fieldName: APPROVAL_STATUS_FIELD, fieldValue: 'pending' }],
+            extraFields: [{ fieldName: APPROVAL_STATUS_FIELD, fieldValue: initialStatus }],
         });
 
         // Fetch full record so extraFields are populated in the response
@@ -298,46 +413,100 @@ router.post('/addresses', async (req: Request, res: Response) => {
     }
 });
 
-// PATCH /v1/api/addresses/:addressId/approve
-// Dealer/distributor approves a pending address request
-router.patch('/addresses/:addressId/approve', async (req: Request, res: Response) => {
-    const { addressId } = req.params as Record<string, string>;
-
-    if (!/^\d+$/.test(addressId)) {
-        return res.status(400).json({ error: 'Invalid addressId' });
+async function authorizeAddressAction(
+    addressId: string,
+    distributorAccountNumber: string
+): Promise<{ address: B2BAddress } | { error: string; status: number }> {
+    const address = await fetchAddressById(addressId);
+    if (!address) {
+        return { error: `Address ${addressId} not found`, status: 404 };
     }
 
-    try {
-        const ok = await setApprovalStatus(addressId, 'approved');
-        if (!ok) return res.status(404).json({ error: `Address ${addressId} not found` });
-
-        logger.info(`Address ${addressId} approved`);
-        return res.json({ addressId: Number(addressId), approvalStatus: 'approved' });
-    } catch (err) {
-        logger.error(`Addresses approve error (${addressId}): ${(err as Error).message}`);
-        return res.status(500).json({ error: 'Failed to approve address' });
-    }
-});
-
-// PATCH /v1/api/addresses/:addressId/reject
-// Dealer/distributor rejects a pending address request
-router.patch('/addresses/:addressId/reject', async (req: Request, res: Response) => {
-    const { addressId } = req.params as Record<string, string>;
-
-    if (!/^\d+$/.test(addressId)) {
-        return res.status(400).json({ error: 'Invalid addressId' });
+    if (getApprovalStatus(address.extraFields) !== 'pending') {
+        return { error: 'Only pending addresses can be approved or rejected', status: 422 };
     }
 
-    try {
-        const ok = await setApprovalStatus(addressId, 'rejected');
-        if (!ok) return res.status(404).json({ error: `Address ${addressId} not found` });
-
-        logger.info(`Address ${addressId} rejected`);
-        return res.json({ addressId: Number(addressId), approvalStatus: 'rejected' });
-    } catch (err) {
-        logger.error(`Addresses reject error (${addressId}): ${(err as Error).message}`);
-        return res.status(500).json({ error: 'Failed to reject address' });
+    const addressCompany = await fetchB2BCompanyById(Number(address.companyId));
+    if (!addressCompany) {
+        return { error: 'Unable to resolve address company from B2B API', status: 502 };
     }
+    const addressCompanyFields = buildExtraFieldsMap(addressCompany.extraFields);
+    if (addressCompanyFields.distributor_id !== distributorAccountNumber) {
+        return { error: 'Forbidden: this address does not belong to one of your customers', status: 403 };
+    }
+
+    return { address };
+}
+
+interface BulkActionItem {
+    addressId: unknown;
+    action: unknown;
+}
+
+interface BulkActionResult {
+    addressId: number;
+    approvalStatus?: string;
+    error?: string;
+}
+
+// PATCH /v1/api/addresses/:distributorId
+// Distributor bulk-approves or rejects pending address requests for their associated customers.
+// Body: [{ addressId: number, action: "approve" | "reject" }, ...]
+router.patch('/addresses/:distributorId', async (req: Request, res: Response) => {
+    const { distributorId } = req.params as Record<string, string>;
+
+    if (!/^\d+$/.test(distributorId)) {
+        return res.status(400).json({ error: 'Invalid distributorId' });
+    }
+
+    const items = req.body as unknown;
+    if (!Array.isArray(items) || items.length === 0) {
+        return res
+            .status(400)
+            .json({ error: 'Request body must be a non-empty array of { addressId, action } objects' });
+    }
+
+    // Validate each item before doing any B2B calls
+    const invalidItem = (items as BulkActionItem[]).find(
+        item => !item.addressId || !/^\d+$/.test(String(item.addressId))
+    );
+    if (invalidItem) {
+        return res.status(400).json({ error: `Invalid addressId: ${invalidItem.addressId}` });
+    }
+    const invalidAction = (items as BulkActionItem[]).find(
+        item => item.action !== 'approve' && item.action !== 'reject'
+    );
+    if (invalidAction) {
+        return res.status(400).json({ error: `action must be "approve" or "reject", got: ${invalidAction.action}` });
+    }
+
+    // Resolve distributor once — fails fast if not a valid distributor
+    const distributorAccountNumber = await resolveDistributorAccountNumber(distributorId);
+    if (!distributorAccountNumber) {
+        return res.status(403).json({ error: 'Forbidden: only distributors may perform this action' });
+    }
+
+    const results: BulkActionResult[] = await Promise.all(
+        (items as BulkActionItem[]).map(async item => {
+            const addrId = String(item.addressId);
+            const newStatus: ApprovalStatus = item.action === 'approve' ? 'approved' : 'rejected';
+
+            try {
+                const auth = await authorizeAddressAction(addrId, distributorAccountNumber);
+                if ('error' in auth) {
+                    return { addressId: Number(addrId), error: auth.error };
+                }
+                await applyApprovalStatus(auth.address, newStatus);
+                logger.info(`Address ${addrId} ${newStatus} by distributor ${distributorId}`);
+                return { addressId: Number(addrId), approvalStatus: newStatus };
+            } catch (err) {
+                logger.error(`Addresses bulk update error (${addrId}): ${(err as Error).message}`);
+                return { addressId: Number(addrId), error: 'Failed to update address approval status' };
+            }
+        })
+    );
+
+    return res.json(results);
 });
 
 export default router;
