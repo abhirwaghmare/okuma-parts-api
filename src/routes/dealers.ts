@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcClient from '../services/bigcommerce';
 import b2bClient from '../services/b2b';
 import {
+    fetchB2BCompanyById,
     fetchB2BCompanyByUserEmail,
     buildCompanyExtraFieldsMap,
     upsertB2BCompanyExtraField,
@@ -416,6 +417,39 @@ async function fetchB2BCompaniesByGroupName(groupName: string): Promise<B2BCompa
     return all.filter(c => c.bcGroupName === groupName);
 }
 
+/**
+ * Fetch a B2B company's default shipping address (city + state code only).
+ * Returns null when the company has no address flagged as default shipping.
+ * List endpoint already returns city/stateCode/isDefaultShipping — no per-address
+ * detail call is needed here (that's only required for extraFields, e.g. approval status).
+ */
+async function fetchCompanyDefaultShippingAddress(
+    companyId: number
+): Promise<{ city: string; stateCode: string } | null> {
+    const addresses = await collectPages<B2BAddressItem>(async off => {
+        try {
+            const res = await b2bClient.get<B2BAddressListResponse>('/api/v3/io/addresses', {
+                params: { companyId, limit: B2B_PAGE_LIMIT, offset: off },
+            });
+            return res.data?.data ?? [];
+        } catch (err) {
+            logger.error(`dealers: company ${companyId} address fetch failed: ${(err as Error).message}`);
+            return [];
+        }
+    });
+    const defaultShipping = addresses.find(a => a.isDefaultShipping === true);
+    if (!defaultShipping) return null;
+    return { city: defaultShipping.city, stateCode: defaultShipping.stateCode };
+}
+
+/** Fetch a B2B company's Account Number extra field. Returns null on any lookup failure. */
+async function fetchCompanyAccountNumber(companyId: number): Promise<string | null> {
+    const company = await fetchB2BCompanyById(companyId);
+    const extraFieldMap = buildCompanyExtraFieldsMap(company?.extraFields);
+    const raw = extraFieldMap.account_number;
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
 // ---------------------------------------------------------------------------
 // Recent-search helpers
 // ---------------------------------------------------------------------------
@@ -475,16 +509,18 @@ async function upsertRecentCustomerSearches(
  * and returns the enriched customer list.
  *
  * Calls:
- *   [1] GET /v3/customers?email:in=<email>&limit=1                    → dealer record
+ *   [1] GET /v3/customers?email:in=<email>&limit=1                     → dealer record
  *   [2] GET /v2/customer_groups                                        → group map (cached 5 min)
  *   [3] GET /api/v3/io/companies (paginated, filtered by bcGroupName)  → matching B2B companies
- *   [4] GET /api/v3/io/users?companyId=<id> ×companies (batched 5)    → BC customer IDs
+ *   [4] GET /api/v3/io/users?companyId=<id> ×companies (batched 5)     → BC customer IDs
+ *       GET /api/v3/io/companies/<id> ×companies (batched 5)          → account number
+ *       GET /api/v3/io/addresses?companyId=<id> ×companies (batched 5) → default shipping city/state
  *   [5] GET /v3/customers?id:in=<ids>&limit=250                        → customer profiles
  *
  * Response:
  * {
  *   dealer:    { id, firstName, lastName, email, company },
- *   customers: [{ id, companyName }],
+ *   customers: [{ id, companyName, accountNumber, cityState }],
  *   meta:      { totalCustomerIds, returnedCustomerIds, truncated }
  * }
  */
@@ -543,17 +579,35 @@ router.get('/dealers/context', async (req, res) => {
             return emptyResponse(dealerRecord);
         }
 
-        // -- 4. Collect BC customer IDs from each company's users (batched) --
-        const usersPerCompany = await batchedMap(b2bCompanies, company => fetchB2BCompanyUsers(company.companyId), 5);
+        // -- 4. Collect BC customer IDs and per-company account number / default shipping address (batched) --
+        const perCompanyData = await batchedMap(
+            b2bCompanies,
+            async company => {
+                const [users, accountNumber, defaultAddress] = await Promise.all([
+                    fetchB2BCompanyUsers(company.companyId),
+                    fetchCompanyAccountNumber(company.companyId),
+                    fetchCompanyDefaultShippingAddress(company.companyId),
+                ]);
+                return { company, users, accountNumber, defaultAddress };
+            },
+            5
+        );
 
         const seen = new Set<number>();
         const customerIds: number[] = [];
+        const customerIdToCompanyId: Record<number, number> = {};
+        const companyMetaById: Record<number, { accountNumber: string | null; cityState: string | null }> = {};
 
-        usersPerCompany.forEach(users => {
+        perCompanyData.forEach(({ company, users, accountNumber, defaultAddress }) => {
+            companyMetaById[company.companyId] = {
+                accountNumber,
+                cityState: defaultAddress ? `${defaultAddress.city}, ${defaultAddress.stateCode}` : null,
+            };
             users.forEach(user => {
                 if (user.customerId > 0 && !seen.has(user.customerId)) {
                     seen.add(user.customerId);
                     customerIds.push(user.customerId);
+                    customerIdToCompanyId[user.customerId] = company.companyId;
                 }
             });
         });
@@ -571,10 +625,15 @@ router.get('/dealers/context', async (req, res) => {
             params: { 'id:in': idsToFetch.join(','), limit: BC_CUSTOMER_FILTER_LIMIT },
         });
 
-        const customers = (customersRes.data?.data ?? []).map((c: BcCustomer) => ({
-            id: c.id,
-            companyName: c.company || null,
-        }));
+        const customers = (customersRes.data?.data ?? []).map((c: BcCustomer) => {
+            const meta = companyMetaById[customerIdToCompanyId[c.id]];
+            return {
+                id: c.id,
+                companyName: c.company || null,
+                accountNumber: meta?.accountNumber ?? null,
+                cityState: meta?.cityState ?? null,
+            };
+        });
 
         return res.json({
             dealer: buildDealerSummary(dealerRecord),
@@ -763,7 +822,9 @@ router.post('/dealers/:dealerId/recent-customer-search', async (req, res) => {
 // ---------------------------------------------------------------------------
 
 function getDealerAddressApprovalStatus(extraFields?: B2BAddressExtraFieldEntry[]): DealerAddressApprovalStatus | null {
-    const field = (extraFields ?? []).find(f => f.fieldName.trim().toLowerCase() === DEALER_APPROVAL_FIELD.toLowerCase());
+    const field = (extraFields ?? []).find(
+        f => f.fieldName.trim().toLowerCase() === DEALER_APPROVAL_FIELD.toLowerCase()
+    );
     const raw = field?.fieldValue;
     if (typeof raw !== 'string') return null;
     const v = raw.trim().toLowerCase();

@@ -304,6 +304,7 @@ interface B2BMachine {
     publicationNos?: string[];
     installDate?: string;
     status?: string;
+    imageName?: string;
 }
 
 router.get('/customer/:customerId/machines', async (req: Request, res: Response, next: NextFunction) => {
@@ -380,6 +381,7 @@ router.get('/customer/:customerId/machines', async (req: Request, res: Response,
                     status: m.status ?? null,
                     pubNos,
                     hasPartsBook: pubNos.length > 0,
+                    imageName: m.imageName ?? null,
                 };
             });
 

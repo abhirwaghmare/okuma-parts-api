@@ -328,11 +328,12 @@ router.get('/addresses', async (req: Request, res: Response) => {
 });
 
 // POST /v1/api/addresses
-// Creates an address. If distributorId is provided and the caller is a distributor,
-// the address is immediately approved. Otherwise it is created as pending.
+// Approval is determined by the company's relationship_type:
+//   distributor company → approved immediately (distributor creating their own address)
+//   customer company    → pending, approval goes to the company's assigned distributor
 router.post('/addresses', async (req: Request, res: Response) => {
     try {
-        const body = req.body as Partial<CreateAddressBody> & { distributorId?: unknown };
+        const body = req.body as Partial<CreateAddressBody>;
 
         const missing = (
             ['firstName', 'lastName', 'companyId', 'addressLine1', 'city', 'stateName', 'countryName'] as const
@@ -345,24 +346,18 @@ router.post('/addresses', async (req: Request, res: Response) => {
             return res.status(400).json({ error: 'companyId must be a positive integer' });
         }
 
-        // If the caller is a distributor, auto-approve only for companies associated to that distributor.
-        let initialStatus: ApprovalStatus = 'pending';
-        if (body.distributorId && /^[1-9]\d*$/.test(String(body.distributorId))) {
-            const accountNumber = await resolveDistributorAccountNumber(String(body.distributorId));
-            if (accountNumber) {
-                const company = await fetchB2BCompanyById(Number(body.companyId));
-                if (!company) {
-                    return res.status(502).json({ error: 'Unable to resolve company for distributor approval' });
-                }
-                const fields = buildExtraFieldsMap(company.extraFields);
-                if (fields.distributor_id !== accountNumber) {
-                    return res
-                        .status(403)
-                        .json({ error: 'Forbidden: distributorId is not associated with this company' });
-                }
-                initialStatus = 'approved';
-            }
+        // Resolve the company — its relationship_type drives the approval flow.
+        const company = await fetchB2BCompanyById(Number(body.companyId));
+        if (!company) {
+            return res.status(502).json({ error: 'Unable to resolve company from B2B API' });
         }
+        const companyFields = buildExtraFieldsMap(company.extraFields);
+        const isDistributor = companyFields.relationship_type?.toLowerCase() === 'distributor';
+
+        // Distributor creating their own address → approved immediately.
+        // Customer creating an address → pending, waiting on their assigned distributor.
+        const initialStatus: ApprovalStatus = isDistributor ? 'approved' : 'pending';
+        const distributorAccountNumber: string | null = isDistributor ? null : (companyFields.distributor_id ?? null);
 
         const usable = initialStatus === 'approved';
 
@@ -413,7 +408,12 @@ router.post('/addresses', async (req: Request, res: Response) => {
         // Fetch full record so extraFields are populated in the response
         const full = await fetchAddressById(String(created.addressId));
 
-        return res.status(201).json(mapAddress(full ?? created));
+        return res.status(201).json({
+            ...mapAddress(full ?? created),
+            ...(initialStatus === 'pending' && distributorAccountNumber
+                ? { pendingApprovalBy: distributorAccountNumber }
+                : {}),
+        });
     } catch (err) {
         const status = (err as { response?: { status?: number } }).response?.status;
         if (status === 400) {

@@ -72,6 +72,7 @@ interface Machine {
     status: string | null;
     pubNos: string[];
     hasPartsBook: boolean;
+    imageName: string | null;
 }
 
 interface MachineSessionState {
@@ -96,6 +97,7 @@ interface B2BMachineRecord {
     publicationNos?: string[];
     installDate?: string;
     status?: string;
+    imageName?: string;
 }
 
 /**
@@ -208,6 +210,7 @@ async function fetchB2BMachines(email: string): Promise<B2BMachinesResult> {
                     status: m.status ?? null,
                     pubNos,
                     hasPartsBook: pubNos.length > 0,
+                    imageName: m.imageName ?? null,
                 };
             })
             .sort((a, b) => {
