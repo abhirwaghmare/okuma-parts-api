@@ -26,7 +26,7 @@ const STATUS_MAP: Record<number, string> = {
     8: 'Awaiting Pickup',
     9: 'Awaiting Shipment',
     10: 'Completed',
-    11: 'Processing',
+    11: 'Awaiting Fulfillment',
     12: 'Manual Verification Required',
     13: 'Disputed',
     14: 'Partially Refunded',
@@ -35,16 +35,16 @@ const STATUS_MAP: Record<number, string> = {
 const CACHE_TTL_HOURS = 24;
 const ORDER_EXTRA_FIELD_ORDERED_FOR = 'orderedFor';
 const ORDER_EXTRA_FIELD_CREATED_BY = 'createdBy';
-const DEFAULT_PLACE_ORDER_STATUS = 'Open';
+const DEFAULT_PLACE_ORDER_STATUS = 'Pending';
 const HIERARCHY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — mirrors dealers.ts's group cache pattern
 
-// Design label -> BC status_id, for orders placed via POST /orders (no payment collected — NET-terms/PO)
+// BigCommerce OOTB status label -> BC status_id, for orders placed via POST /orders (no payment collected — NET-terms/PO)
 const ORDER_STATUS_ID_BY_LABEL: Record<string, number> = {
-    Open: 1, // Pending
-    Processing: 11, // Awaiting Fulfillment
-    Shipped: 2, // Shipped
-    Delivered: 10, // Completed
-    Cancelled: 5, // Cancelled
+    Pending: 1,
+    'Awaiting Fulfillment': 11,
+    Shipped: 2,
+    Completed: 10,
+    Cancelled: 5,
 };
 
 // Fix #4: concurrency-limited map — mirrors the batchedMap pattern in routes/dealers.ts
@@ -157,10 +157,10 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 /**
- * Validates and normalizes the lineItems array from a place-order request body.
- * Returns null if the array is empty or any entry has a non-positive-integer
- * productId/quantity.
- */
+* Validates and normalizes the lineItems array from a place-order request body.
+* Returns null if the array is empty or any entry has a non-positive-integer
+* productId/quantity.
+*/
 function parseLineItems(raw: unknown): PlaceOrderLineItem[] | null {
     if (!Array.isArray(raw) || raw.length === 0) return null;
 
@@ -177,9 +177,9 @@ function parseLineItems(raw: unknown): PlaceOrderLineItem[] | null {
 }
 
 /**
- * Fetch a B2B company's address book.
- * BC OOTB: GET /api/v3/io/addresses?companyId={companyId}
- */
+* Fetch a B2B company's address book.
+* BC OOTB: GET /api/v3/io/addresses?companyId={companyId}
+*/
 async function fetchB2BCompanyAddresses(companyId: number): Promise<B2BCompanyAddress[]> {
     try {
         const res = await b2bClient.get<{ data: B2BCompanyAddress[] }>('/api/v3/io/addresses', {
@@ -201,13 +201,13 @@ function buildOrderExtraFieldsMap(extraFields?: B2BOrderExtraField[]): Record<st
 }
 
 /**
- * Registers a B2B order record for a core BigCommerce order.
- * BC does not automatically create this record for orders placed via the plain
- * REST Management `POST /v2/orders` (confirmed empirically in this store), so this
- * must be called explicitly right after order creation. Does not create a second
- * real order — only attaches B2B metadata to the existing BC order.
- * B2B OOTB: POST /api/v3/io/orders
- */
+* Registers a B2B order record for a core BigCommerce order.
+* BC does not automatically create this record for orders placed via the plain
+* REST Management `POST /v2/orders` (confirmed empirically in this store), so this
+* must be called explicitly right after order creation. Does not create a second
+* real order — only attaches B2B metadata to the existing BC order.
+* B2B OOTB: POST /api/v3/io/orders
+*/
 async function registerB2BOrder(bcOrderId: number, customerId: number): Promise<void> {
     try {
         await b2bClient.post('/api/v3/io/orders', { bcOrderId, customerId });
@@ -217,9 +217,9 @@ async function registerB2BOrder(bcOrderId: number, customerId: number): Promise<
 }
 
 /**
- * Sets extra fields on a B2B order record (must already be registered).
- * B2B OOTB: PUT /api/v3/io/orders/{bcOrderId}
- */
+* Sets extra fields on a B2B order record (must already be registered).
+* B2B OOTB: PUT /api/v3/io/orders/{bcOrderId}
+*/
 async function setB2BOrderExtraFields(bcOrderId: number, fields: Record<string, string>): Promise<void> {
     try {
         const extraFields = Object.entries(fields).map(([fieldName, fieldValue]) => ({ fieldName, fieldValue }));
@@ -230,16 +230,16 @@ async function setB2BOrderExtraFields(bcOrderId: number, fields: Record<string, 
 }
 
 /**
- * Fetch a single B2B order's extra fields.
- *
- * The bulk `GET /api/v3/io/orders?companyId=` list does NOT include extraFields
- * (confirmed empirically — no query parameter unlocks it), so attribution has to
- * be read per order via the single-order endpoint instead.
- *
- * A 404 here is an expected, normal case — it means this order was never placed
- * through POST /orders (e.g. a company's own self-service order), not an error.
- * B2B OOTB: GET /api/v3/io/orders/{bcOrderId}
- */
+* Fetch a single B2B order's extra fields.
+*
+* The bulk `GET /api/v3/io/orders?companyId=` list does NOT include extraFields
+* (confirmed empirically — no query parameter unlocks it), so attribution has to
+* be read per order via the single-order endpoint instead.
+*
+* A 404 here is an expected, normal case — it means this order was never placed
+* through POST /orders (e.g. a company's own self-service order), not an error.
+* B2B OOTB: GET /api/v3/io/orders/{bcOrderId}
+*/
 // Cache keyed by BC order ID — an order's own createdBy/orderedFor never change once
 // set (or never get set at all, for a self-service order), so this never goes stale.
 // Cuts the dominant cost of GET /recent-orders: re-checking the same orders' B2B
@@ -293,15 +293,15 @@ interface DealerHierarchy {
 const dealerHierarchyCache = new Map<number, DealerHierarchy>();
 
 /**
- * Resolves (and caches, 5 min TTL) a dealer's own B2B company, its name, and its
- * companies — shared by POST /orders and GET /recent-orders so neither has to
- * re-walk the full company list on every request for the same dealer.
- *
- * Companies are matched by `bcGroupName === dealer's own company name`, not by
- * B2B's `parentCompany` link — confirmed against real data that `parentCompany`
- * only covers a small fraction of a dealer's actual client companies in this
- * store, while bcGroupName correctly reflects all of them.
- */
+* Resolves (and caches, 5 min TTL) a dealer's own B2B company, its name, and its
+* companies — shared by POST /orders and GET /recent-orders so neither has to
+* re-walk the full company list on every request for the same dealer.
+*
+* Companies are matched by `bcGroupName === dealer's own company name`, not by
+* B2B's `parentCompany` link — confirmed against real data that `parentCompany`
+* only covers a small fraction of a dealer's actual client companies in this
+* store, while bcGroupName correctly reflects all of them.
+*/
 async function resolveDealerHierarchy(dealerId: number, dealerEmail: string): Promise<DealerHierarchy | null> {
     const cached = dealerHierarchyCache.get(dealerId);
     if (cached && Date.now() - cached.cachedAt < HIERARCHY_CACHE_TTL_MS) {
@@ -341,10 +341,10 @@ interface CachedCompanyUsers {
 const companyUsersCache = new Map<number, CachedCompanyUsers>();
 
 /**
- * Cached wrapper (5 min TTL, same as the hierarchy cache) around fetchB2BCompanyUsers —
- * GET /recent-orders calls this once per subsidiary on every page load; company
- * membership doesn't change minute-to-minute, so this is a large repeat-call saving.
- */
+* Cached wrapper (5 min TTL, same as the hierarchy cache) around fetchB2BCompanyUsers —
+* GET /recent-orders calls this once per subsidiary on every page load; company
+* membership doesn't change minute-to-minute, so this is a large repeat-call saving.
+*/
 async function fetchB2BCompanyUsersCached(companyId: number): Promise<B2BCompanyUser[]> {
     const cached = companyUsersCache.get(companyId);
     if (cached && Date.now() - cached.cachedAt < HIERARCHY_CACHE_TTL_MS) {
@@ -522,9 +522,9 @@ router.get('/recent-orders', async (req: Request, res: Response) => {
 // `createdBy`) — visible in the B2B admin panel and read back by GET /recent-orders
 // to scope results.
 //
-// `status` is one of the design labels — Open, Processing, Shipped, Delivered,
-// Cancelled — mapped to the corresponding BC status_id. Defaults to "Open" when
-// omitted.
+// `status` is one of BigCommerce's OOTB status labels — Pending, Awaiting Fulfillment,
+// Shipped, Completed, Cancelled — mapped to the corresponding BC status_id. Defaults
+// to "Pending" when omitted.
 router.post('/orders', async (req: Request, res: Response) => {
     try {
         const {
@@ -553,7 +553,10 @@ router.post('/orders', async (req: Request, res: Response) => {
         }
 
         const statusLabel = rawStatus === undefined ? DEFAULT_PLACE_ORDER_STATUS : rawStatus;
-        if (typeof statusLabel !== 'string' || !(statusLabel in ORDER_STATUS_ID_BY_LABEL)) {
+        if (
+            typeof statusLabel !== 'string' ||
+            !Object.prototype.hasOwnProperty.call(ORDER_STATUS_ID_BY_LABEL, statusLabel)
+        ) {
             return res.status(400).json({
                 error: `status must be one of: ${Object.keys(ORDER_STATUS_ID_BY_LABEL).join(', ')}.`,
             });
@@ -715,3 +718,4 @@ router.get('/quotes', async (req: Request, res: Response) => {
 });
 
 export default router;
+ 

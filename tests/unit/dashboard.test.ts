@@ -111,11 +111,11 @@ function createdOrder(id: number, statusId = 1) {
 }
 
 /**
- * Wires up the B2B GET dispatcher (email lookup, company lookup, subsidiary
- * list, company users, addresses) that both POST /orders and GET /recent-orders
- * rely on via resolveDealerHierarchy. URL-dispatched rather than order-dependent
- * since both routes make many distinct B2B calls.
- */
+* Wires up the B2B GET dispatcher (email lookup, company lookup, subsidiary
+* list, company users, addresses) that both POST /orders and GET /recent-orders
+* rely on via resolveDealerHierarchy. URL-dispatched rather than order-dependent
+* since both routes make many distinct B2B calls.
+*/
 function setupHierarchy(opts: {
     dealerCompanyId: number;
     dealerCompanyName: string;
@@ -202,6 +202,16 @@ describe('Dashboard orders API', () => {
                 .post(ORDERS_URL)
                 .set(AUTH)
                 .send({ customerId: 1, companyId: 1, lineItems: [{ productId: 1, quantity: 1 }], status: 'Bogus' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error).toMatch(/status must be one of/);
+        });
+
+        it('returns 400 when status is an inherited Object.prototype property name', async () => {
+            const res = await request(app)
+                .post(ORDERS_URL)
+                .set(AUTH)
+                .send({ customerId: 1, companyId: 1, lineItems: [{ productId: 1, quantity: 1 }], status: 'constructor' });
 
             expect(res.status).toBe(400);
             expect(res.body.error).toMatch(/status must be one of/);
@@ -327,7 +337,7 @@ describe('Dashboard orders API', () => {
                 '/v2/orders',
                 expect.objectContaining({
                     customer_id: 200,
-                    status_id: 1, // default "Open"
+                    status_id: 1, // default "Pending"
                     products: [{ product_id: 1, quantity: 2 }],
                 })
             );
@@ -378,7 +388,7 @@ describe('Dashboard orders API', () => {
                     customerId: 202,
                     companyId: 1202,
                     lineItems: [{ productId: 1, quantity: 1 }],
-                    status: 'Processing',
+                    status: 'Awaiting Fulfillment',
                 });
 
             expect(res.status).toBe(201);
@@ -541,3 +551,4 @@ describe('Dashboard orders API', () => {
         });
     });
 });
+ 
