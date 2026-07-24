@@ -7,12 +7,20 @@ import {
     buildCompanyExtraFieldsMap,
     upsertB2BCompanyExtraField,
 } from '../services/b2b-company';
+import {
+    B2BCompany,
+    B2BPage,
+    B2B_PAGE_LIMIT,
+    collectPages,
+    fetchB2BCompanyIdByEmail,
+    fetchB2BSubsidiaries,
+    fetchB2BCompanyUsers,
+} from '../services/b2b-hierarchy';
 import logger from '../config/logger';
 
 const router = Router();
 
 const GROUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes — groups change rarely
-const B2B_PAGE_LIMIT = 100;
 const BC_CUSTOMER_FILTER_LIMIT = 250;
 const RECENT_SEARCH_LIMIT = 3;
 
@@ -64,35 +72,6 @@ interface BcCustomerGroup {
 // ---------------------------------------------------------------------------
 // Types — B2B Edition hierarchy
 // ---------------------------------------------------------------------------
-
-interface B2BCompany {
-    companyId: number;
-    companyName: string;
-    companyEmail: string;
-    bcGroupName?: string;
-    parentCompany: {
-        id: number | null;
-        name: string;
-    };
-}
-
-interface B2BCompanyUser {
-    id: number;
-    email: string;
-    customerId: number; // BC customer ID
-    companyId: number;
-}
-
-interface B2BPage<T> {
-    data: T[];
-    meta?: {
-        pagination?: {
-            totalCount?: number;
-            offset?: number;
-            limit?: number;
-        };
-    };
-}
 
 interface DealerCustomerResult {
     customerIds: number[];
@@ -246,78 +225,6 @@ function buildDealerSummary(dealer: BcCustomer) {
 // ---------------------------------------------------------------------------
 // B2B Hierarchy Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Recursively collects all pages from a paginated B2B endpoint.
- * Uses recursion instead of a loop to satisfy the no-restricted-syntax rule.
- */
-async function collectPages<T>(fetcher: (off: number) => Promise<T[]>, pageOffset = 0, acc: T[] = []): Promise<T[]> {
-    const page = await fetcher(pageOffset);
-    acc.push(...page);
-    if (page.length < B2B_PAGE_LIMIT) return acc;
-    return collectPages(fetcher, pageOffset + B2B_PAGE_LIMIT, acc);
-}
-
-/**
- * Find the dealer's B2B company ID by looking up the admin user via their email.
- *
- * B2B API: GET /api/v3/io/users?email={email}
- * The returned user object contains `companyId` which is the dealer's B2B company.
- */
-async function fetchB2BCompanyIdByEmail(email: string): Promise<number | null> {
-    try {
-        const res = await b2bClient.get<B2BPage<B2BCompanyUser>>('/api/v3/io/users', {
-            params: { email, limit: 1 },
-        });
-        const user = res.data?.data?.[0] ?? null;
-        return user ? user.companyId : null;
-    } catch (err) {
-        logger.error(`B2B user lookup by email ${email} failed: ${(err as Error).message}`);
-        return null;
-    }
-}
-
-/**
- * Fetch all direct subsidiaries of a B2B company.
- *
- * The B2B API does not support server-side parent filtering, so all companies
- * are fetched (paginated) and filtered client-side on parentCompany.id.
- *
- * B2B API: GET /api/v3/io/companies (paginated)
- */
-async function fetchB2BSubsidiaries(dealerCompanyId: number): Promise<B2BCompany[]> {
-    const all = await collectPages(async off => {
-        try {
-            const res = await b2bClient.get<B2BPage<B2BCompany>>('/api/v3/io/companies', {
-                params: { limit: B2B_PAGE_LIMIT, offset: off },
-            });
-            return res.data?.data ?? [];
-        } catch (err) {
-            logger.error(`B2B companies fetch failed: ${(err as Error).message}`);
-            throw err;
-        }
-    });
-    return all.filter(c => c.parentCompany?.id === dealerCompanyId);
-}
-
-/**
- * Fetch all B2B users (and their BC customer IDs) for a given company (all pages).
- *
- * B2B API: GET /api/v3/io/users?companyId={companyId}
- */
-async function fetchB2BCompanyUsers(companyId: number): Promise<B2BCompanyUser[]> {
-    return collectPages(async off => {
-        try {
-            const res = await b2bClient.get<B2BPage<B2BCompanyUser>>('/api/v3/io/users', {
-                params: { companyId, limit: B2B_PAGE_LIMIT, offset: off },
-            });
-            return res.data?.data ?? [];
-        } catch (err) {
-            logger.error(`B2B users fetch for company ${companyId} failed: ${(err as Error).message}`);
-            throw err;
-        }
-    });
-}
 
 /**
  * Core hierarchy resolver.
