@@ -8,7 +8,7 @@ import {
     B2BCompany,
     B2BCompanyUser,
     fetchB2BCompanyIdByEmail,
-    fetchB2BSubsidiaries,
+    fetchB2BCompaniesByGroupName,
     fetchB2BCompanyUsers,
 } from '../services/b2b-hierarchy';
 import logger from '../config/logger';
@@ -294,8 +294,13 @@ const dealerHierarchyCache = new Map<number, DealerHierarchy>();
 
 /**
  * Resolves (and caches, 5 min TTL) a dealer's own B2B company, its name, and its
- * subsidiaries — shared by POST /orders and GET /recent-orders so neither has to
+ * companies — shared by POST /orders and GET /recent-orders so neither has to
  * re-walk the full company list on every request for the same dealer.
+ *
+ * Companies are matched by `bcGroupName === dealer's own company name`, not by
+ * B2B's `parentCompany` link — confirmed against real data that `parentCompany`
+ * only covers a small fraction of a dealer's actual client companies in this
+ * store, while bcGroupName correctly reflects all of them.
  */
 async function resolveDealerHierarchy(dealerId: number, dealerEmail: string): Promise<DealerHierarchy | null> {
     const cached = dealerHierarchyCache.get(dealerId);
@@ -306,10 +311,7 @@ async function resolveDealerHierarchy(dealerId: number, dealerEmail: string): Pr
     const dealerCompanyId = await fetchB2BCompanyIdByEmail(dealerEmail);
     if (!dealerCompanyId) return null;
 
-    const [dealerCompany, subsidiaries] = await Promise.all([
-        fetchB2BCompanyById(dealerCompanyId),
-        fetchB2BSubsidiaries(dealerCompanyId),
-    ]);
+    const dealerCompany = await fetchB2BCompanyById(dealerCompanyId);
 
     // Treat a missing company name as a resolution failure, not a silent empty
     // string — an empty createdBy would get written on POST /orders and would
@@ -318,6 +320,8 @@ async function resolveDealerHierarchy(dealerId: number, dealerEmail: string): Pr
         logger.warn(`Dashboard: failed to resolve dealer company name for companyId=${dealerCompanyId}`);
         return null;
     }
+
+    const subsidiaries = await fetchB2BCompaniesByGroupName(dealerCompany.companyName);
 
     const resolved: DealerHierarchy = {
         dealerCompanyId,

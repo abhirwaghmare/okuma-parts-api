@@ -8,13 +8,12 @@ import {
     upsertB2BCompanyExtraField,
 } from '../services/b2b-company';
 import {
-    B2BCompany,
-    B2BPage,
     B2B_PAGE_LIMIT,
     collectPages,
     fetchB2BCompanyIdByEmail,
     fetchB2BSubsidiaries,
     fetchB2BCompanyUsers,
+    fetchB2BCompaniesByGroupName,
 } from '../services/b2b-hierarchy';
 import logger from '../config/logger';
 
@@ -303,26 +302,10 @@ async function fetchCustomerIdsFromHierarchy(dealerEmail: string): Promise<Deale
 // ---------------------------------------------------------------------------
 // B2B company-group helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Fetch all B2B companies whose bcGroupName exactly matches the supplied name.
- * The B2B API has no server-side filter for this field, so all pages are fetched
- * and filtered client-side.
- */
-async function fetchB2BCompaniesByGroupName(groupName: string): Promise<B2BCompany[]> {
-    const all = await collectPages(async off => {
-        try {
-            const res = await b2bClient.get<B2BPage<B2BCompany>>('/api/v3/io/companies', {
-                params: { limit: B2B_PAGE_LIMIT, offset: off },
-            });
-            return res.data?.data ?? [];
-        } catch (err) {
-            logger.error(`B2B companies fetch failed: ${(err as Error).message}`);
-            throw err;
-        }
-    });
-    return all.filter(c => c.bcGroupName === groupName);
-}
+//
+// Note: fetchB2BCompaniesByGroupName used to be defined locally here — it now
+// lives in services/b2b-hierarchy.ts (shared with dashboard.ts's order-placement
+// feature) and is imported above instead of duplicated.
 
 /**
  * Fetch a B2B company's default shipping address (city + state code only).

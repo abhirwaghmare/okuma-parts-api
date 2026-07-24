@@ -59,14 +59,15 @@ function b2bCompanyById(companyName: string) {
     return { data: { data: { companyName } } };
 }
 
-function b2bCompanyList(companies: Array<{ companyId: number; companyName: string; parentCompanyId: number | null }>) {
+function b2bCompanyList(companies: Array<{ companyId: number; companyName: string; bcGroupName: string }>) {
     return {
         data: {
             data: companies.map(c => ({
                 companyId: c.companyId,
                 companyName: c.companyName,
                 companyEmail: '',
-                parentCompany: { id: c.parentCompanyId, name: '' },
+                bcGroupName: c.bcGroupName,
+                parentCompany: { id: null, name: '' },
             })),
         },
     };
@@ -139,7 +140,7 @@ function setupHierarchy(opts: {
         }
         if (url === '/api/v3/io/companies') {
             return Promise.resolve(
-                b2bCompanyList(subsidiaries.map(s => ({ ...s, parentCompanyId: opts.dealerCompanyId })))
+                b2bCompanyList(subsidiaries.map(s => ({ ...s, bcGroupName: opts.dealerCompanyName })))
             );
         }
         if (url === '/api/v3/io/addresses') {
@@ -457,7 +458,9 @@ describe('Dashboard orders API', () => {
                 }
                 if (url === '/api/v3/io/companies/1303') return Promise.resolve(b2bCompanyById('Dealer Co 303'));
                 if (url === '/api/v3/io/companies') {
-                    return Promise.resolve(b2bCompanyList([{ companyId: 2303, companyName: 'Client Co 303', parentCompanyId: 1303 }]));
+                    return Promise.resolve(
+                        b2bCompanyList([{ companyId: 2303, companyName: 'Client Co 303', bcGroupName: 'Dealer Co 303' }])
+                    );
                 }
                 if (url === '/api/v3/io/orders/5001') {
                     // No createdBy/orderedFor — this order was never placed via POST /orders

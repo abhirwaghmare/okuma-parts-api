@@ -20,6 +20,48 @@ interface BcSearchProduct {
     inventory_level: number;
 }
 
+interface BcInventoryLocation {
+    available_to_sell: number;
+}
+
+interface BcInventoryItem {
+    identity: { product_id: number };
+    locations: BcInventoryLocation[];
+}
+
+/**
+ * Fetch MSI (multi-location) inventory and return total available_to_sell per product.
+ * Only called for products that have inventory_tracking !== 'none'.
+ * BC stores stock per location; the top-level product inventory_level field is 0
+ * when MSI is enabled and does not aggregate across locations.
+ */
+async function fetchMsiAvailable(productIds: number[]): Promise<Record<number, number>> {
+    const totalByProductId: Record<number, number> = {};
+    const limit = 250;
+    let page = 1;
+
+    while (true) {
+        const res = await bcClient.get<{
+            data: BcInventoryItem[];
+            meta?: { pagination?: { current_page: number; total_pages: number } };
+        }>('/v3/inventory/items', {
+            params: { 'product_id:in': productIds.join(','), limit, page },
+        });
+
+        (res.data?.data ?? []).forEach(item => {
+            const sum = (item.locations ?? []).reduce((acc, loc) => acc + (loc.available_to_sell ?? 0), 0);
+            const productId = item.identity.product_id;
+            totalByProductId[productId] = (totalByProductId[productId] ?? 0) + sum;
+        });
+
+        const pagination = res.data?.meta?.pagination;
+        if (!pagination || pagination.current_page >= pagination.total_pages) break;
+        page += 1;
+    }
+
+    return totalByProductId;
+}
+
 interface BcPricingItem {
     product_id: number;
     price: { as_entered: number };
@@ -147,22 +189,30 @@ router.get('/parts/search', async (req: Request, res: Response) => {
         const products = searchRes.data?.data ?? [];
         const total = searchRes.data?.meta?.pagination?.total ?? 0;
 
-        const priceByProductId =
+        const trackedProductIds = products.filter(p => p.inventory_tracking !== 'none').map(p => p.id);
+
+        const [priceByProductId, msiAvailableById] = await Promise.all([
             products.length > 0
-                ? await fetchPricing(
+                ? fetchPricing(
                       products.map(p => p.id),
                       profile.customer_group_id
                   )
-                : {};
+                : ({} as Record<number, PricingResult>),
+            trackedProductIds.length > 0
+                ? fetchMsiAvailable(trackedProductIds)
+                : ({} as Record<number, number>),
+        ]);
 
         const results: PartResult[] = products.map(p => {
             let inStock: boolean;
             if (p.availability !== 'available') {
                 inStock = false;
             } else if (p.inventory_tracking === 'none') {
-                inStock = true;
+                inStock = false;
             } else {
-                inStock = p.inventory_level > 0;
+                // Use MSI aggregate — product-level inventory_level is 0 when multi-location is enabled
+                const totalAvailable = msiAvailableById[p.id] ?? p.inventory_level;
+                inStock = totalAvailable > 0;
             }
             const stockStatus = inStock ? 'instock' : 'backorder';
             const shippingDetails = inStock ? 'Ships in 1-3 business days' : 'Will be shipped once available';

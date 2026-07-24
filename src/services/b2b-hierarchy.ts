@@ -119,3 +119,31 @@ export async function fetchB2BCompanyUsers(companyId: number): Promise<B2BCompan
         }
     });
 }
+
+/**
+ * Fetch all B2B companies whose bcGroupName exactly matches the supplied name.
+ *
+ * This is the authoritative way to find a dealer's real client companies —
+ * confirmed against real data that `parentCompany` linkage (fetchB2BSubsidiaries)
+ * covers only a small fraction of a dealer's actual companies in this store,
+ * while bcGroupName correctly reflects all of them.
+ *
+ * The B2B API has no server-side filter for this field, so all pages are fetched
+ * and filtered client-side.
+ *
+ * B2B API: GET /api/v3/io/companies (paginated)
+ */
+export async function fetchB2BCompaniesByGroupName(groupName: string): Promise<B2BCompany[]> {
+    const all = await collectPages(async off => {
+        try {
+            const res = await b2bClient.get<B2BPage<B2BCompany>>('/api/v3/io/companies', {
+                params: { limit: B2B_PAGE_LIMIT, offset: off },
+            });
+            return res.data?.data ?? [];
+        } catch (err) {
+            logger.error(`b2b-hierarchy: companies fetch failed: ${(err as Error).message}`);
+            throw err;
+        }
+    });
+    return all.filter(c => c.bcGroupName === groupName);
+}
